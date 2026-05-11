@@ -35,7 +35,7 @@ export function Header() {
         <ThemeToggle />
         
         <DropdownMenu>
-          <DropdownMenuTrigger asChild>
+          <DropdownMenuTrigger className="outline-none focus:outline-none">
             <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/10 cursor-pointer hover:bg-primary/20 transition-colors overflow-hidden">
               {user?.photoURL ? (
                 <img src={user.photoURL} alt="Avatar" className="w-full h-full object-cover" />

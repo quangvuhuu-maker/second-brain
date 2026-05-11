@@ -157,7 +157,9 @@ export default function TasksPage() {
                     <span className="text-sm text-muted-foreground">Status:</span>
                     <Select 
                       value={activeTask.status} 
-                      onValueChange={(val: TaskStatus) => updateTaskStatus(activeTask.id, val)}
+                      onValueChange={(val) => {
+                        if (val) updateTaskStatus(activeTask.id, val as TaskStatus);
+                      }}
                     >
                       <SelectTrigger className="w-[140px] h-8">
                         <SelectValue />
