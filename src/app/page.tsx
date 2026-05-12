@@ -1,5 +1,6 @@
 import { AdhocTaskWidget } from "@/components/dashboard/AdhocTaskWidget";
 import { MarketAnalysis } from "@/components/dashboard/MarketAnalysis";
+import { TopPerformance } from "@/components/dashboard/TopPerformance";
 
 export default function Home() {
   return (
@@ -13,6 +14,11 @@ export default function Home() {
 
       {/* AI Automated Market Analysis Section */}
       <MarketAnalysis />
+
+      {/* Top 10 Performance */}
+      <div className="grid grid-cols-1 mt-4">
+        <TopPerformance />
+      </div>
 
       {/* Ad-hoc Task Widget */}
       <div className="grid grid-cols-1 mt-4">

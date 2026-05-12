@@ -2,12 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { TrendingUp, TrendingDown, RefreshCw, Loader2, Target, BarChart2, BookOpen } from "lucide-react";
+import { TrendingUp, TrendingDown, RefreshCw, Loader2, Target, BarChart2, BookOpen, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-
-import { Separator } from "@/components/ui/separator";
 
 interface Recommendation {
   symbol: string;
@@ -27,28 +25,43 @@ interface DeepAnalysis {
   topSells: Recommendation[];
 }
 
+function formatCachedTime(isoStr: string): string {
+  try {
+    const d = new Date(isoStr);
+    return d.toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" });
+  } catch {
+    return isoStr;
+  }
+}
+
 export default function RecommendationsPage() {
   const [data, setData] = useState<DeepAnalysis | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [cachedAt, setCachedAt] = useState<string | null>(null);
+  const [fromCache, setFromCache] = useState(false);
 
-  const fetchAnalysis = async () => {
+  const fetchAnalysis = async (refresh = false) => {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch("/api/deep-recommendations");
+      const url = refresh ? "/api/deep-recommendations?refresh=true" : "/api/deep-recommendations";
+      const res = await fetch(url);
       const json = await res.json();
       if (!json.success) throw new Error(json.error);
       setData(json.data);
-    } catch (err: any) {
-      setError(err.message);
+      setCachedAt(json.cachedAt || null);
+      setFromCache(json.fromCache || false);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      setError(message);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchAnalysis();
+    fetchAnalysis(false);
   }, []);
 
   return (
@@ -63,11 +76,26 @@ export default function RecommendationsPage() {
               Top 10 Buy & Sell picks from HSX, HNX, UPCOM analyzed by AI based on Technicals and Fundamentals.
             </p>
           </div>
-          <Button onClick={fetchAnalysis} disabled={loading}>
+          <Button onClick={() => fetchAnalysis(true)} disabled={loading}>
             {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
             Generate Analysis
           </Button>
         </div>
+
+        {/* Thời gian cache */}
+        {cachedAt && (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Clock className="h-3 w-3" />
+            <span>
+              {fromCache ? "Dữ liệu cache từ" : "Cập nhật lúc"}: {formatCachedTime(cachedAt)}
+            </span>
+            {fromCache && (
+              <span className="bg-amber-500/10 text-amber-500 px-2 py-0.5 rounded-full text-[10px] font-medium">
+                CACHE
+              </span>
+            )}
+          </div>
+        )}
 
         {error && (
           <div className="p-6 bg-destructive/10 text-destructive rounded-lg border border-destructive/20">

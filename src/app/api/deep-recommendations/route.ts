@@ -1,31 +1,91 @@
-import { NextResponse } from "next/server";
-import { geminiModel } from "@/lib/gemini";
+import { NextRequest, NextResponse } from "next/server";
+import { geminiModel, generateContentWithFallback } from "@/lib/gemini";
 import { fetchStockData, fetchMacroNews } from "@/lib/market-data";
+import { adminDb } from "@/lib/firebase-admin";
+import { safeParseJSON } from "@/lib/safe-parse-json";
+import { FieldValue } from "firebase-admin/firestore";
 
-export async function GET() {
+const CACHE_DOC = "deep-recommendations";
+const CACHE_COLLECTION = "ai_cache";
+
+function isCacheToday(cachedAt: string | undefined): boolean {
+  if (!cachedAt) return false;
+  const cachedDate = new Date(cachedAt);
+  const now = new Date();
+  const vnOffset = 7 * 60;
+  const cachedVN = new Date(cachedDate.getTime() + vnOffset * 60000);
+  const nowVN = new Date(now.getTime() + vnOffset * 60000);
+  return (
+    cachedVN.getUTCFullYear() === nowVN.getUTCFullYear() &&
+    cachedVN.getUTCMonth() === nowVN.getUTCMonth() &&
+    cachedVN.getUTCDate() === nowVN.getUTCDate()
+  );
+}
+
+/**
+ * Lấy ngày Việt Nam dạng YYYY-MM-DD
+ */
+function getVNDateString(): string {
+  const now = new Date();
+  const vnOffset = 7 * 60;
+  const vnDate = new Date(now.getTime() + vnOffset * 60000);
+  return vnDate.toISOString().slice(0, 10);
+}
+
+export async function GET(request: NextRequest) {
   try {
-    const stocks = await fetchStockData();
+    const { searchParams } = new URL(request.url);
+    const forceRefresh = searchParams.get("refresh") === "true";
+
+    // Kiểm tra cache
+    try {
+      const cacheDoc = await adminDb.collection(CACHE_COLLECTION).doc(CACHE_DOC).get();
+      if (cacheDoc.exists) {
+        const cached = cacheDoc.data();
+        const cachedAt = cached?.cachedAt?.toDate?.()?.toISOString() || cached?.cachedAt;
+        if (!forceRefresh) {
+          return NextResponse.json({
+            success: true,
+            data: cached?.data,
+            cachedAt,
+            fromCache: true,
+          });
+        }
+      }
+    } catch (cacheErr) {
+      console.warn("Cache read failed:", cacheErr);
+    }
+
+    const stocks = await fetchStockData(forceRefresh);
     const news = await fetchMacroNews();
+
+    const stocksText = stocks.map((s: any) => `${s.symbol}|${s.price}|${s.volume}|${s.trend}|${s.rsi}|${s.macd}|${s.obvTrend}|${s.bbWidth}`).join("\n");
+    const newsText = news.map((n: any) => `- ${n.title} (${n.time}): ${n.summary}`).join("\n");
 
     const prompt = `
     Bạn là Giám đốc Đầu tư (CIO) của một quỹ đầu tư hàng đầu tại Việt Nam.
     Nhiệm vụ của bạn là phân tích rổ cổ phiếu siêu thanh khoản (150+ mã chọn lọc từ HSX, HNX, UPCOM) và tin tức vĩ mô mới nhất để chọn ra Top 10 cổ phiếu KHUYẾN NGHỊ MUA và Top 10 cổ phiếu KHUYẾN NGHỊ BÁN/CẮT LỖ.
 
-    DỮ LIỆU CỔ PHIẾU (Đã được lọc sơ bộ loại bỏ thanh khoản thấp):
-    ${JSON.stringify(stocks, null, 2)}
+    DỮ LIỆU CỔ PHIẾU (Đã được lọc sơ bộ):
+    [Symbol | Price | Vol | Trend | RSI | MACD/Signal | OBV_Trend | BB_Width]
+    ${stocksText}
     
     TIN TỨC VĨ MÔ & THỊ TRƯỜNG:
-    ${JSON.stringify(news, null, 2)}
+    ${newsText}
     
-    TIÊU CHÍ LỌC (KHUYẾN NGHỊ MUA):
-    1. Cổ phiếu có dư địa tăng tốt (Upside lớn).
-    2. Đang trong giai đoạn tích lũy nền (sideway) hoặc chuẩn bị break out (Dựa vào Price và MA20).
-    3. Thuộc ngành nghề có tiềm năng tăng trưởng, hưởng lợi từ các tin tức vĩ mô.
+    TIÊU CHÍ LỌC (KHUYẾN NGHỊ MUA) - BẮT BUỘC ÁP DỤNG CHECKLIST "LỆNH MUA ĐIỂM 10":
+    1. Cổ phiếu có dư địa tăng tốt, thuộc ngành nghề tiềm năng, vĩ mô ủng hộ.
+    2. Kỹ thuật: RSI nằm trong khoảng 50-60 (đang lấy đà).
+    3. Kỹ thuật: MACD cắt lên Signal Line (MACD > Signal).
+    4. Kỹ thuật: OBV dốc lên (OBV_Trend = Up) cho thấy dòng tiền vào.
+    5. Kỹ thuật: Bollinger Bands (BB) thắt nút cổ chai (BB_Width = Tight) chuẩn bị bứt phá.
+    * BẮT BUỘC loại bỏ các mã bị phân kỳ âm RSI hoặc MACD cắt xuống (kể cả khi giá vẫn nằm trên MA20).
 
     TIÊU CHÍ LỌC (KHUYẾN NGHỊ BÁN):
-    1. Cổ phiếu gãy trend, thủng MA20.
-    2. Ngành nghề đang gặp khó khăn, vĩ mô không ủng hộ.
-    3. Rủi ro giảm giá (Downside) lớn.
+    1. Cổ phiếu gãy trend, thủng MA20, vĩ mô không ủng hộ.
+    2. Kỹ thuật: RSI quá mua (> 70) hoặc gãy (< 40).
+    3. Kỹ thuật: MACD cắt xuống Signal Line (MACD < Signal).
+    4. Kỹ thuật: OBV đi ngang hoặc dốc xuống (OBV_Trend = Flat/Down) thể hiện dòng tiền rút ra.
 
     YÊU CẦU ĐẦU RA: Trả về ĐÚNG định dạng JSON sau (không chứa markdown \`\`\`json):
     {
@@ -58,21 +118,80 @@ export async function GET() {
     - Bán: Vùng giá bán/cắt lỗ (sellPrice), Chờ mua lại ở (targetPrice).
     `;
 
-    const result = await geminiModel.generateContent({
+    // Fetch API keys from settings
+    let apiKeys: string[] = [];
+    try {
+      const settingsDoc = await adminDb.collection("settings").doc("api_keys").get();
+      if (settingsDoc.exists) {
+        apiKeys = settingsDoc.data()?.geminiKeys || [];
+      }
+    } catch (e) {
+      console.warn("Failed to fetch API keys from settings", e);
+    }
+
+    const requestContent = {
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       generationConfig: {
         responseMimeType: "application/json",
       }
-    });
+    };
+
+    const result = await generateContentWithFallback(requestContent, apiKeys, "gemini-flash-latest");
 
     const responseText = result.response.text();
-    const analysis = JSON.parse(responseText);
+    const analysis = safeParseJSON(responseText);
 
-    return NextResponse.json({ success: true, data: analysis });
-  } catch (error: any) {
-    console.error("Deep Analysis Error:", error);
+    const now = new Date().toISOString();
+    const vnDate = getVNDateString();
+
+    // Lưu cache vào Firestore
+    try {
+      await adminDb.collection(CACHE_COLLECTION).doc(CACHE_DOC).set({
+        data: analysis,
+        cachedAt: FieldValue.serverTimestamp(),
+      });
+    } catch (cacheErr) {
+      console.warn("Cache write failed:", cacheErr);
+    }
+
+    // Lưu log khuyến nghị vào Firestore
+    try {
+      const analysisData: any = analysis;
+      const logEntry = {
+        date: vnDate,
+        createdAt: FieldValue.serverTimestamp(),
+        topBuys: (analysisData.topBuys || []).map((s: Record<string, unknown>) => ({
+          symbol: s.symbol,
+          entryPrice: s.entryPrice,
+          targetPrice: s.targetPrice,
+          stopLossPrice: s.stopLossPrice,
+          currentPrice: s.currentPrice,
+          upsidePercent: s.upsidePercent,
+        })),
+        topSells: (analysisData.topSells || []).map((s: Record<string, unknown>) => ({
+          symbol: s.symbol,
+          sellPrice: s.sellPrice,
+          targetPrice: s.targetPrice,
+          currentPrice: s.currentPrice,
+          downsidePercent: s.downsidePercent,
+        })),
+      };
+      await adminDb.collection("recommendation_logs").doc(vnDate).set(logEntry);
+    } catch (logErr) {
+      console.warn("Log write failed:", logErr);
+    }
+
+    return NextResponse.json({
+      success: true,
+      data: analysis,
+      cachedAt: now,
+      fromCache: false,
+    });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    console.error("Deep Analysis Error:", message);
     return NextResponse.json(
-      { success: false, error: error.message },
+      { success: false, error: message },
       { status: 500 }
     );
   }

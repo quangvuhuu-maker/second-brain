@@ -20,10 +20,12 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
  * Fetch Stock Data
  * Gọi sang Python FastAPI Backend (cổng 8000) để lấy dữ liệu chứng khoán thật từ vnstock.
  */
-export async function fetchStockData(): Promise<StockData[]> {
+export async function fetchStockData(refresh: boolean = false): Promise<StockData[]> {
   try {
-    const res = await fetch(`${API_URL}/api/market/stocks`, {
-      next: { revalidate: 60 } // Cache trong 60 giây
+    const fetchUrl = refresh ? `${API_URL}/api/market/stocks?refresh=true` : `${API_URL}/api/market/stocks`;
+    const res = await fetch(fetchUrl, {
+      next: { revalidate: 60 }, // Cache trong 60 giây
+      signal: AbortSignal.timeout(30000)
     });
     if (!res.ok) throw new Error("Lỗi kết nối Backend Python (Stocks)");
     return await res.json();
@@ -43,7 +45,8 @@ export async function fetchStockData(): Promise<StockData[]> {
 export async function fetchMacroNews(): Promise<MacroNews[]> {
   try {
     const res = await fetch(`${API_URL}/api/market/news`, {
-      next: { revalidate: 60 }
+      next: { revalidate: 60 },
+      signal: AbortSignal.timeout(30000)
     });
     if (!res.ok) throw new Error("Lỗi kết nối Backend Python (News)");
     return await res.json();

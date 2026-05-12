@@ -1,6 +1,6 @@
 "use client";
 
-import { Search, User, LogOut } from "lucide-react";
+import { Search, User, LogOut, UserCircle } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { useAuth } from "@/context/AuthContext";
@@ -12,10 +12,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import Image from "next/image";
+import { useRouter } from "next/navigation";
 
 export function Header() {
   const { user, logout } = useAuth();
+  const router = useRouter();
 
   return (
     <header className="flex h-14 items-center gap-4 border-b bg-background px-4 lg:h-[60px] lg:px-6 sticky top-0 z-10">
@@ -54,9 +55,14 @@ export function Header() {
               </div>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => router.push("/profile")} className="cursor-pointer">
+              <UserCircle className="mr-2 h-4 w-4" />
+              <span>Trang cá nhân</span>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
             <DropdownMenuItem onClick={logout} className="text-destructive cursor-pointer">
               <LogOut className="mr-2 h-4 w-4" />
-              <span>Log out</span>
+              <span>Đăng xuất</span>
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

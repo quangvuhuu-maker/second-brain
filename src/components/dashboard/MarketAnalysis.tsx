@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { TrendingUp, TrendingDown, Minus, RefreshCw, Loader2 } from "lucide-react";
+import { TrendingUp, TrendingDown, Minus, RefreshCw, Loader2, Clock } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
 
@@ -18,28 +18,43 @@ interface AnalysisData {
   newsRecap: { title: string; summary: string; time: string }[];
 }
 
+function formatCachedTime(isoStr: string): string {
+  try {
+    const d = new Date(isoStr);
+    return d.toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" });
+  } catch {
+    return isoStr;
+  }
+}
+
 export function MarketAnalysis() {
   const [data, setData] = useState<AnalysisData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [cachedAt, setCachedAt] = useState<string | null>(null);
+  const [fromCache, setFromCache] = useState(false);
 
-  const fetchAnalysis = async () => {
+  const fetchAnalysis = async (refresh = false) => {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch("/api/analyze-market");
+      const url = refresh ? "/api/analyze-market?refresh=true" : "/api/analyze-market";
+      const res = await fetch(url);
       const json = await res.json();
       if (!json.success) throw new Error(json.error);
       setData(json.data);
-    } catch (err: any) {
-      setError(err.message);
+      setCachedAt(json.cachedAt || null);
+      setFromCache(json.fromCache || false);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      setError(message);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchAnalysis();
+    fetchAnalysis(false);
   }, []);
 
   if (loading && !data) {
@@ -65,7 +80,7 @@ export function MarketAnalysis() {
       <div className="w-full p-6 bg-destructive/10 text-destructive rounded-lg border border-destructive/20 flex flex-col items-center justify-center gap-4">
         <p className="font-semibold">Failed to load market analysis</p>
         <p className="text-sm">{error}</p>
-        <Button onClick={fetchAnalysis} variant="outline" className="border-destructive/20">
+        <Button onClick={() => fetchAnalysis(true)} variant="outline" className="border-destructive/20">
           <RefreshCw className="mr-2 h-4 w-4" /> Try Again
         </Button>
       </div>
@@ -76,11 +91,25 @@ export function MarketAnalysis() {
 
   return (
     <div className="flex flex-col gap-6 animate-in fade-in duration-500">
-      <div className="flex justify-end">
+      <div className="flex items-center justify-between">
+        {/* Hiển thị thời gian cache */}
+        {cachedAt && (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Clock className="h-3 w-3" />
+            <span>
+              {fromCache ? "Dữ liệu cache từ" : "Cập nhật lúc"}: {formatCachedTime(cachedAt)}
+            </span>
+            {fromCache && (
+              <span className="bg-amber-500/10 text-amber-500 px-2 py-0.5 rounded-full text-[10px] font-medium">
+                CACHE
+              </span>
+            )}
+          </div>
+        )}
         <Button 
           variant="outline" 
           size="sm" 
-          onClick={fetchAnalysis} 
+          onClick={() => fetchAnalysis(true)} 
           disabled={loading}
           className="text-xs text-muted-foreground"
         >
@@ -101,7 +130,7 @@ export function MarketAnalysis() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-foreground">{data.marketTrend}</div>
-            <p className="text-xs text-muted-foreground mt-1 truncate" title={data.trendReason}>
+            <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
               {data.trendReason}
             </p>
           </CardContent>
@@ -118,7 +147,7 @@ export function MarketAnalysis() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-foreground">{data.macroImpact}</div>
-            <p className="text-xs text-muted-foreground mt-1 truncate" title={data.macroReason}>
+            <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
               {data.macroReason}
             </p>
           </CardContent>
@@ -135,7 +164,7 @@ export function MarketAnalysis() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-foreground">{data.aiSuggestion}</div>
-            <p className="text-xs text-muted-foreground mt-1 truncate" title={data.aiReasoning}>
+            <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
               {data.aiReasoning}
             </p>
           </CardContent>

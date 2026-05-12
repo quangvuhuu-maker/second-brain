@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { geminiModel } from "@/lib/gemini";
+import { geminiModel, generateContentWithFallback } from "@/lib/gemini";
+import { adminDb } from "@/lib/firebase-admin";
 
 export async function POST(req: Request) {
   try {
@@ -24,9 +25,22 @@ export async function POST(req: Request) {
       );
     }
 
-    const result = await geminiModel.generateContent({
+    // Fetch API keys from settings
+    let apiKeys: string[] = [];
+    try {
+      const settingsDoc = await adminDb.collection("settings").doc("api_keys").get();
+      if (settingsDoc.exists) {
+        apiKeys = settingsDoc.data()?.geminiKeys || [];
+      }
+    } catch (e) {
+      console.warn("Failed to fetch API keys from settings", e);
+    }
+
+    const requestContent = {
       contents: contents,
-    });
+    };
+
+    const result = await generateContentWithFallback(requestContent, apiKeys, "gemini-flash-latest");
 
     const responseText = result.response.text();
 
