@@ -5,6 +5,14 @@ export interface StockData {
   volume: number;
   movingAverage20: number;
   trend: "Bullish" | "Bearish" | "Sideway";
+  rsi: number;
+  macd: string;
+  obvTrend: string;
+  bbWidth: string;
+  support: number;
+  resistance: number;
+  smcSignal: string;
+  vsaSignal: string;
 }
 
 export interface MacroNews {
