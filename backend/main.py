@@ -299,3 +299,118 @@ def get_historical_prices(symbols: str, date: str):
             
     return results
 
+@app.get("/api/market/stock/{symbol}")
+def get_single_stock(symbol: str):
+    """Lấy dữ liệu kỹ thuật cho 1 mã cổ phiếu bất kỳ (không cần nằm trong danh sách theo dõi)."""
+    symbol = symbol.upper().strip()
+    yf_sym = f"{symbol}.VN"
+    
+    try:
+        data = yf.download(yf_sym, period="3mo", progress=False)
+        
+        if data.empty:
+            return {"error": f"Không tìm thấy dữ liệu cho mã {symbol}"}
+        
+        df = data.dropna()
+        if df.empty:
+            return {"error": f"Dữ liệu rỗng cho mã {symbol}"}
+            
+        latest = df.iloc[-1]
+        prev = df.iloc[-2] if len(df) > 1 else latest
+        
+        close_prices = df['Close']
+        open_prices = df['Open']
+        high_prices = df['High']
+        low_prices = df['Low']
+        volume_data = df['Volume']
+        
+        ma20 = close_prices.tail(20).mean() if len(df) >= 20 else close_prices.mean()
+        change_percent = ((latest['Close'] - prev['Close']) / prev['Close']) * 100
+        
+        if change_percent > 1: trend = "Bullish"
+        elif change_percent < -1: trend = "Bearish"
+        else: trend = "Sideway"
+        
+        # RSI 14
+        delta = close_prices.diff()
+        gain = (delta.where(delta > 0, 0)).ewm(alpha=1/14, adjust=False).mean()
+        loss = (-delta.where(delta < 0, 0)).ewm(alpha=1/14, adjust=False).mean()
+        rs = gain / loss
+        rsi_series = 100 - (100 / (1 + rs))
+        rsi = round(float(rsi_series.iloc[-1]), 1) if not rsi_series.empty and not pd.isna(rsi_series.iloc[-1]) else 50.0
+        
+        # MACD
+        ema12 = close_prices.ewm(span=12, adjust=False).mean()
+        ema26 = close_prices.ewm(span=26, adjust=False).mean()
+        macd_line = ema12 - ema26
+        signal_line = macd_line.ewm(span=9, adjust=False).mean()
+        macd = round(float(macd_line.iloc[-1]), 2)
+        signal = round(float(signal_line.iloc[-1]), 2)
+        
+        # Bollinger Bands
+        bb_ma20 = close_prices.rolling(window=20).mean()
+        bb_std20 = close_prices.rolling(window=20).std()
+        upper_band = bb_ma20 + (bb_std20 * 2)
+        lower_band = bb_ma20 - (bb_std20 * 2)
+        bb_width_val = (upper_band.iloc[-1] - lower_band.iloc[-1]) / bb_ma20.iloc[-1] if not bb_ma20.empty and not pd.isna(bb_ma20.iloc[-1]) else 0.0
+        bb_width = "Tight" if bb_width_val < 0.1 else "Expanded"
+        
+        # OBV
+        obv_series = (np.sign(close_prices.diff()) * volume_data).fillna(0).cumsum()
+        if len(obv_series) > 1:
+            obv_trend = "Up" if obv_series.iloc[-1] > obv_series.iloc[-2] else "Down" if obv_series.iloc[-1] < obv_series.iloc[-2] else "Flat"
+        else:
+            obv_trend = "Flat"
+        
+        # SMC
+        support_level = round(float(low_prices.tail(20).min()), 2)
+        resistance_level = round(float(high_prices.tail(20).max()), 2)
+        
+        smc_signal = "None"
+        if len(df) >= 3:
+            if low_prices.iloc[-1] > high_prices.iloc[-3] and close_prices.iloc[-2] > open_prices.iloc[-2]:
+                smc_signal = "Bullish FVG"
+            elif high_prices.iloc[-1] < low_prices.iloc[-3] and close_prices.iloc[-2] < open_prices.iloc[-2]:
+                smc_signal = "Bearish FVG"
+        if smc_signal == "None" and len(df) >= 10:
+            if close_prices.iloc[-1] > high_prices.iloc[-11:-1].max():
+                smc_signal = "Bullish BOS/CHoCH"
+            elif close_prices.iloc[-1] < low_prices.iloc[-11:-1].min():
+                smc_signal = "Bearish BOS/CHoCH"
+        
+        # VSA
+        vsa_signal = "None"
+        vol_ma20 = volume_data.rolling(20).mean().iloc[-1] if len(volume_data) >= 20 else volume_data.mean()
+        if vol_ma20 > 0:
+            current_vol = volume_data.iloc[-1]
+            spread = high_prices.iloc[-1] - low_prices.iloc[-1]
+            avg_spread = (high_prices - low_prices).tail(20).mean()
+            is_high_vol = current_vol > (1.5 * vol_ma20)
+            is_wide_spread = spread > (1.5 * avg_spread)
+            if spread > 0:
+                upper_wick_pct = (high_prices.iloc[-1] - max(open_prices.iloc[-1], close_prices.iloc[-1])) / spread
+                lower_wick_pct = (min(open_prices.iloc[-1], close_prices.iloc[-1]) - low_prices.iloc[-1]) / spread
+                if is_high_vol and (lower_wick_pct > 0.5 or (is_wide_spread and close_prices.iloc[-1] > open_prices.iloc[-1])):
+                    vsa_signal = "SOS (Sign of Strength)"
+                elif is_high_vol and (upper_wick_pct > 0.5 or (is_wide_spread and close_prices.iloc[-1] < open_prices.iloc[-1])):
+                    vsa_signal = "SOW (Sign of Weakness)"
+        
+        return {
+            "symbol": symbol,
+            "price": float(latest['Close']),
+            "changePercent": round(float(change_percent), 2),
+            "volume": int(latest['Volume']),
+            "movingAverage20": round(float(ma20), 2),
+            "trend": trend,
+            "rsi": rsi,
+            "macd": f"{macd}/{signal}",
+            "obvTrend": obv_trend,
+            "bbWidth": bb_width,
+            "support": support_level,
+            "resistance": resistance_level,
+            "smcSignal": smc_signal,
+            "vsaSignal": vsa_signal
+        }
+    except Exception as e:
+        print(f"Error processing single stock {symbol}: {e}")
+        return {"error": f"Lỗi xử lý mã {symbol}: {str(e)}"}

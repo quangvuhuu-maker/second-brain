@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { generateContentWithFallback } from "@/lib/gemini";
-import { fetchStockData, fetchMacroNews } from "@/lib/market-data";
+import { fetchStockData, fetchMacroNews, fetchSingleStock } from "@/lib/market-data";
 import { adminDb } from "@/lib/firebase-admin";
 import { safeParseJSON } from "@/lib/safe-parse-json";
 import { FieldValue } from "firebase-admin/firestore";
@@ -52,20 +52,29 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Lấy dữ liệu song song để tiết kiệm thời gian
-    const [stocks, news] = await Promise.all([
-      fetchStockData(false),
-      fetchMacroNews()
-    ]);
+    // Lấy tin tức vĩ mô (luôn cần)
+    const news = await fetchMacroNews();
 
-    // Tìm cổ phiếu trong danh sách
-    const stockData = stocks.find((s: any) => s.symbol === symbol);
+    // Tìm cổ phiếu: ưu tiên từ cache danh sách 150+, nếu không có thì fetch riêng lẻ
+    let stockData;
+    try {
+      const stocks = await fetchStockData(false);
+      stockData = stocks.find((s: any) => s.symbol === symbol);
+    } catch (e) {
+      console.warn("Failed to fetch stock list, will try single stock fetch");
+    }
 
+    // Fallback: Fetch riêng lẻ cho mã không nằm trong danh sách
     if (!stockData) {
-      return NextResponse.json(
-        { success: false, error: `Không tìm thấy mã "${symbol}" trong danh sách theo dõi (150+ mã). Vui lòng thử mã khác.` },
-        { status: 404 }
-      );
+      try {
+        stockData = await fetchSingleStock(symbol);
+      } catch (singleErr: unknown) {
+        const msg = singleErr instanceof Error ? singleErr.message : "Unknown";
+        return NextResponse.json(
+          { success: false, error: `Không tìm thấy dữ liệu cho mã "${symbol}". ${msg}` },
+          { status: 404 }
+        );
+      }
     }
 
     const newsText = news.slice(0, 5).map((n: any) => `- ${n.title}: ${n.summary}`).join("\n");

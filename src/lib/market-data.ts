@@ -54,3 +54,17 @@ export async function fetchMacroNews(): Promise<MacroNews[]> {
   if (!res.ok) throw new Error("Lỗi kết nối Backend Python (News). Vui lòng kiểm tra backend trên Render.");
   return await res.json();
 }
+
+/**
+ * Fetch Single Stock Data
+ * Lấy dữ liệu kỹ thuật cho 1 mã cổ phiếu bất kỳ (không cần nằm trong danh sách theo dõi).
+ */
+export async function fetchSingleStock(symbol: string): Promise<StockData> {
+  const res = await fetch(`${API_URL}/api/market/stock/${symbol.toUpperCase()}`, {
+    signal: AbortSignal.timeout(60000)
+  });
+  if (!res.ok) throw new Error(`Lỗi kết nối Backend khi lấy dữ liệu mã ${symbol}`);
+  const data = await res.json();
+  if (data.error) throw new Error(data.error);
+  return data;
+}
