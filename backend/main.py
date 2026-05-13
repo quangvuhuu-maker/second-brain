@@ -8,6 +8,16 @@ import numpy as np
 import time
 import asyncio
 import pytz
+import warnings
+warnings.filterwarnings('ignore')
+
+# vnstock fallback for HNX/UPCOM stocks not available on Yahoo Finance
+try:
+    from vnstock import Vnstock
+    VNSTOCK_AVAILABLE = True
+except ImportError:
+    VNSTOCK_AVAILABLE = False
+    print("WARNING: vnstock not installed. HNX/UPCOM fallback will not work.")
 
 app = FastAPI()
 
@@ -299,118 +309,186 @@ def get_historical_prices(symbols: str, date: str):
             
     return results
 
+def _compute_indicators(df, symbol):
+    """Tính toán các chỉ báo kỹ thuật từ DataFrame OHLCV.
+    Dùng chung cho cả yfinance và vnstock."""
+    latest = df.iloc[-1]
+    prev = df.iloc[-2] if len(df) > 1 else latest
+    
+    close_prices = df['Close']
+    open_prices = df['Open']
+    high_prices = df['High']
+    low_prices = df['Low']
+    volume_data = df['Volume']
+    
+    ma20 = close_prices.tail(20).mean() if len(df) >= 20 else close_prices.mean()
+    change_percent = ((latest['Close'] - prev['Close']) / prev['Close']) * 100
+    
+    if change_percent > 1: trend = "Bullish"
+    elif change_percent < -1: trend = "Bearish"
+    else: trend = "Sideway"
+    
+    # RSI 14
+    delta = close_prices.diff()
+    gain = (delta.where(delta > 0, 0)).ewm(alpha=1/14, adjust=False).mean()
+    loss = (-delta.where(delta < 0, 0)).ewm(alpha=1/14, adjust=False).mean()
+    rs = gain / loss
+    rsi_series = 100 - (100 / (1 + rs))
+    rsi = round(float(rsi_series.iloc[-1]), 1) if not rsi_series.empty and not pd.isna(rsi_series.iloc[-1]) else 50.0
+    
+    # MACD
+    ema12 = close_prices.ewm(span=12, adjust=False).mean()
+    ema26 = close_prices.ewm(span=26, adjust=False).mean()
+    macd_line = ema12 - ema26
+    signal_line = macd_line.ewm(span=9, adjust=False).mean()
+    macd = round(float(macd_line.iloc[-1]), 2)
+    signal = round(float(signal_line.iloc[-1]), 2)
+    
+    # Bollinger Bands
+    bb_ma20 = close_prices.rolling(window=20).mean()
+    bb_std20 = close_prices.rolling(window=20).std()
+    upper_band = bb_ma20 + (bb_std20 * 2)
+    lower_band = bb_ma20 - (bb_std20 * 2)
+    bb_width_val = (upper_band.iloc[-1] - lower_band.iloc[-1]) / bb_ma20.iloc[-1] if not bb_ma20.empty and not pd.isna(bb_ma20.iloc[-1]) else 0.0
+    bb_width = "Tight" if bb_width_val < 0.1 else "Expanded"
+    
+    # OBV
+    obv_series = (np.sign(close_prices.diff()) * volume_data).fillna(0).cumsum()
+    if len(obv_series) > 1:
+        obv_trend = "Up" if obv_series.iloc[-1] > obv_series.iloc[-2] else "Down" if obv_series.iloc[-1] < obv_series.iloc[-2] else "Flat"
+    else:
+        obv_trend = "Flat"
+    
+    # SMC
+    support_level = round(float(low_prices.tail(20).min()), 2)
+    resistance_level = round(float(high_prices.tail(20).max()), 2)
+    
+    smc_signal = "None"
+    if len(df) >= 3:
+        if low_prices.iloc[-1] > high_prices.iloc[-3] and close_prices.iloc[-2] > open_prices.iloc[-2]:
+            smc_signal = "Bullish FVG"
+        elif high_prices.iloc[-1] < low_prices.iloc[-3] and close_prices.iloc[-2] < open_prices.iloc[-2]:
+            smc_signal = "Bearish FVG"
+    if smc_signal == "None" and len(df) >= 10:
+        if close_prices.iloc[-1] > high_prices.iloc[-11:-1].max():
+            smc_signal = "Bullish BOS/CHoCH"
+        elif close_prices.iloc[-1] < low_prices.iloc[-11:-1].min():
+            smc_signal = "Bearish BOS/CHoCH"
+    
+    # VSA
+    vsa_signal = "None"
+    vol_ma20 = volume_data.rolling(20).mean().iloc[-1] if len(volume_data) >= 20 else volume_data.mean()
+    if vol_ma20 > 0:
+        current_vol = volume_data.iloc[-1]
+        spread = high_prices.iloc[-1] - low_prices.iloc[-1]
+        avg_spread = (high_prices - low_prices).tail(20).mean()
+        is_high_vol = current_vol > (1.5 * vol_ma20)
+        is_wide_spread = spread > (1.5 * avg_spread)
+        if spread > 0:
+            upper_wick_pct = (high_prices.iloc[-1] - max(open_prices.iloc[-1], close_prices.iloc[-1])) / spread
+            lower_wick_pct = (min(open_prices.iloc[-1], close_prices.iloc[-1]) - low_prices.iloc[-1]) / spread
+            if is_high_vol and (lower_wick_pct > 0.5 or (is_wide_spread and close_prices.iloc[-1] > open_prices.iloc[-1])):
+                vsa_signal = "SOS (Sign of Strength)"
+            elif is_high_vol and (upper_wick_pct > 0.5 or (is_wide_spread and close_prices.iloc[-1] < open_prices.iloc[-1])):
+                vsa_signal = "SOW (Sign of Weakness)"
+    
+    return {
+        "symbol": symbol,
+        "price": float(latest['Close']),
+        "changePercent": round(float(change_percent), 2),
+        "volume": int(latest['Volume']),
+        "movingAverage20": round(float(ma20), 2),
+        "trend": trend,
+        "rsi": rsi,
+        "macd": f"{macd}/{signal}",
+        "obvTrend": obv_trend,
+        "bbWidth": bb_width,
+        "support": support_level,
+        "resistance": resistance_level,
+        "smcSignal": smc_signal,
+        "vsaSignal": vsa_signal
+    }
+
+
+def _fetch_vnstock_data(symbol: str):
+    """Fallback: Lấy dữ liệu từ vnstock cho các mã HNX/UPCOM không có trên Yahoo Finance."""
+    if not VNSTOCK_AVAILABLE:
+        return None
+    
+    end_date = datetime.datetime.now().strftime('%Y-%m-%d')
+    start_date = (datetime.datetime.now() - datetime.timedelta(days=90)).strftime('%Y-%m-%d')
+    
+    # Thử lần lượt các nguồn dữ liệu
+    for source in ['VCI', 'KBS']:
+        try:
+            stock = Vnstock().stock(symbol=symbol, source=source)
+            df = stock.quote.history(start=start_date, end=end_date, interval='1D')
+            if df is not None and not df.empty:
+                # Chuẩn hóa tên cột cho phù hợp với _compute_indicators
+                col_map = {}
+                for col in df.columns:
+                    col_lower = col.lower()
+                    if col_lower == 'open': col_map[col] = 'Open'
+                    elif col_lower == 'high': col_map[col] = 'High'
+                    elif col_lower == 'low': col_map[col] = 'Low'
+                    elif col_lower == 'close': col_map[col] = 'Close'
+                    elif col_lower == 'volume': col_map[col] = 'Volume'
+                if col_map:
+                    df = df.rename(columns=col_map)
+                
+                # Đảm bảo giá được nhân 1000 nếu vnstock trả về giá theo nghìn đồng
+                # vnstock VCI trả giá theo nghìn đồng (VD: 7.5 = 7,500 VND)
+                if 'Close' in df.columns and df['Close'].max() < 1000:
+                    for col in ['Open', 'High', 'Low', 'Close']:
+                        if col in df.columns:
+                            df[col] = df[col] * 1000
+                
+                print(f"vnstock ({source}) fetched {len(df)} rows for {symbol}")
+                return df
+        except Exception as e:
+            print(f"vnstock ({source}) failed for {symbol}: {e}")
+            continue
+    
+    return None
+
+
 @app.get("/api/market/stock/{symbol}")
 def get_single_stock(symbol: str):
-    """Lấy dữ liệu kỹ thuật cho 1 mã cổ phiếu bất kỳ (không cần nằm trong danh sách theo dõi)."""
+    """Lấy dữ liệu kỹ thuật cho 1 mã cổ phiếu bất kỳ (không cần nằm trong danh sách theo dõi).
+    Thử yfinance trước, nếu không có dữ liệu thì fallback sang vnstock (hỗ trợ HNX/UPCOM)."""
     symbol = symbol.upper().strip()
     yf_sym = f"{symbol}.VN"
     
+    df = None
+    source_used = "yfinance"
+    
+    # Bước 1: Thử yfinance
     try:
         data = yf.download(yf_sym, period="3mo", progress=False)
-        
-        if data.empty:
-            return {"error": f"Mã '{symbol}' không tồn tại hoặc đã bị hủy niêm yết (delisted). Vui lòng kiểm tra lại mã cổ phiếu."}
-        
-        df = data.dropna()
-        if df.empty:
-            return {"error": f"Mã '{symbol}' hiện không có dữ liệu giao dịch. Cổ phiếu có thể đang tạm ngừng giao dịch."}
-            
-        latest = df.iloc[-1]
-        prev = df.iloc[-2] if len(df) > 1 else latest
-        
-        close_prices = df['Close']
-        open_prices = df['Open']
-        high_prices = df['High']
-        low_prices = df['Low']
-        volume_data = df['Volume']
-        
-        ma20 = close_prices.tail(20).mean() if len(df) >= 20 else close_prices.mean()
-        change_percent = ((latest['Close'] - prev['Close']) / prev['Close']) * 100
-        
-        if change_percent > 1: trend = "Bullish"
-        elif change_percent < -1: trend = "Bearish"
-        else: trend = "Sideway"
-        
-        # RSI 14
-        delta = close_prices.diff()
-        gain = (delta.where(delta > 0, 0)).ewm(alpha=1/14, adjust=False).mean()
-        loss = (-delta.where(delta < 0, 0)).ewm(alpha=1/14, adjust=False).mean()
-        rs = gain / loss
-        rsi_series = 100 - (100 / (1 + rs))
-        rsi = round(float(rsi_series.iloc[-1]), 1) if not rsi_series.empty and not pd.isna(rsi_series.iloc[-1]) else 50.0
-        
-        # MACD
-        ema12 = close_prices.ewm(span=12, adjust=False).mean()
-        ema26 = close_prices.ewm(span=26, adjust=False).mean()
-        macd_line = ema12 - ema26
-        signal_line = macd_line.ewm(span=9, adjust=False).mean()
-        macd = round(float(macd_line.iloc[-1]), 2)
-        signal = round(float(signal_line.iloc[-1]), 2)
-        
-        # Bollinger Bands
-        bb_ma20 = close_prices.rolling(window=20).mean()
-        bb_std20 = close_prices.rolling(window=20).std()
-        upper_band = bb_ma20 + (bb_std20 * 2)
-        lower_band = bb_ma20 - (bb_std20 * 2)
-        bb_width_val = (upper_band.iloc[-1] - lower_band.iloc[-1]) / bb_ma20.iloc[-1] if not bb_ma20.empty and not pd.isna(bb_ma20.iloc[-1]) else 0.0
-        bb_width = "Tight" if bb_width_val < 0.1 else "Expanded"
-        
-        # OBV
-        obv_series = (np.sign(close_prices.diff()) * volume_data).fillna(0).cumsum()
-        if len(obv_series) > 1:
-            obv_trend = "Up" if obv_series.iloc[-1] > obv_series.iloc[-2] else "Down" if obv_series.iloc[-1] < obv_series.iloc[-2] else "Flat"
-        else:
-            obv_trend = "Flat"
-        
-        # SMC
-        support_level = round(float(low_prices.tail(20).min()), 2)
-        resistance_level = round(float(high_prices.tail(20).max()), 2)
-        
-        smc_signal = "None"
-        if len(df) >= 3:
-            if low_prices.iloc[-1] > high_prices.iloc[-3] and close_prices.iloc[-2] > open_prices.iloc[-2]:
-                smc_signal = "Bullish FVG"
-            elif high_prices.iloc[-1] < low_prices.iloc[-3] and close_prices.iloc[-2] < open_prices.iloc[-2]:
-                smc_signal = "Bearish FVG"
-        if smc_signal == "None" and len(df) >= 10:
-            if close_prices.iloc[-1] > high_prices.iloc[-11:-1].max():
-                smc_signal = "Bullish BOS/CHoCH"
-            elif close_prices.iloc[-1] < low_prices.iloc[-11:-1].min():
-                smc_signal = "Bearish BOS/CHoCH"
-        
-        # VSA
-        vsa_signal = "None"
-        vol_ma20 = volume_data.rolling(20).mean().iloc[-1] if len(volume_data) >= 20 else volume_data.mean()
-        if vol_ma20 > 0:
-            current_vol = volume_data.iloc[-1]
-            spread = high_prices.iloc[-1] - low_prices.iloc[-1]
-            avg_spread = (high_prices - low_prices).tail(20).mean()
-            is_high_vol = current_vol > (1.5 * vol_ma20)
-            is_wide_spread = spread > (1.5 * avg_spread)
-            if spread > 0:
-                upper_wick_pct = (high_prices.iloc[-1] - max(open_prices.iloc[-1], close_prices.iloc[-1])) / spread
-                lower_wick_pct = (min(open_prices.iloc[-1], close_prices.iloc[-1]) - low_prices.iloc[-1]) / spread
-                if is_high_vol and (lower_wick_pct > 0.5 or (is_wide_spread and close_prices.iloc[-1] > open_prices.iloc[-1])):
-                    vsa_signal = "SOS (Sign of Strength)"
-                elif is_high_vol and (upper_wick_pct > 0.5 or (is_wide_spread and close_prices.iloc[-1] < open_prices.iloc[-1])):
-                    vsa_signal = "SOW (Sign of Weakness)"
-        
-        return {
-            "symbol": symbol,
-            "price": float(latest['Close']),
-            "changePercent": round(float(change_percent), 2),
-            "volume": int(latest['Volume']),
-            "movingAverage20": round(float(ma20), 2),
-            "trend": trend,
-            "rsi": rsi,
-            "macd": f"{macd}/{signal}",
-            "obvTrend": obv_trend,
-            "bbWidth": bb_width,
-            "support": support_level,
-            "resistance": resistance_level,
-            "smcSignal": smc_signal,
-            "vsaSignal": vsa_signal
-        }
+        if not data.empty:
+            # yfinance trả về MultiIndex columns (e.g. ('Close', 'VCB.VN'))
+            # Cần flatten về dạng đơn giản ('Close', 'Open', ...)
+            if isinstance(data.columns, pd.MultiIndex):
+                data = data.droplevel(1, axis=1)
+            df = data.dropna()
+            if df.empty:
+                df = None
     except Exception as e:
-        print(f"Error processing single stock {symbol}: {e}")
+        print(f"yfinance failed for {symbol}: {e}")
+    
+    # Bước 2: Fallback sang vnstock nếu yfinance không có dữ liệu
+    if df is None:
+        print(f"yfinance has no data for {symbol}, trying vnstock fallback...")
+        df = _fetch_vnstock_data(symbol)
+        source_used = "vnstock"
+    
+    if df is None or df.empty:
+        return {"error": f"Không tìm thấy dữ liệu cho mã '{symbol}'. Mã cổ phiếu không tồn tại hoặc đã bị hủy niêm yết."}
+    
+    try:
+        result = _compute_indicators(df, symbol)
+        result["dataSource"] = source_used
+        return result
+    except Exception as e:
+        print(f"Error computing indicators for {symbol}: {e}")
         return {"error": f"Lỗi xử lý mã {symbol}: {str(e)}"}
