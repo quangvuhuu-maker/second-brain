@@ -69,9 +69,9 @@ export async function GET(request: NextRequest) {
       try {
         stockData = await fetchSingleStock(symbol);
       } catch (singleErr: unknown) {
-        const msg = singleErr instanceof Error ? singleErr.message : "Unknown";
+        const msg = singleErr instanceof Error ? singleErr.message : "Mã cổ phiếu không hợp lệ hoặc đã bị hủy niêm yết.";
         return NextResponse.json(
-          { success: false, error: `Không tìm thấy dữ liệu cho mã "${symbol}". ${msg}` },
+          { success: false, error: msg },
           { status: 404 }
         );
       }

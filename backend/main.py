@@ -309,11 +309,11 @@ def get_single_stock(symbol: str):
         data = yf.download(yf_sym, period="3mo", progress=False)
         
         if data.empty:
-            return {"error": f"Không tìm thấy dữ liệu cho mã {symbol}"}
+            return {"error": f"Mã '{symbol}' không tồn tại hoặc đã bị hủy niêm yết (delisted). Vui lòng kiểm tra lại mã cổ phiếu."}
         
         df = data.dropna()
         if df.empty:
-            return {"error": f"Dữ liệu rỗng cho mã {symbol}"}
+            return {"error": f"Mã '{symbol}' hiện không có dữ liệu giao dịch. Cổ phiếu có thể đang tạm ngừng giao dịch."}
             
         latest = df.iloc[-1]
         prev = df.iloc[-2] if len(df) > 1 else latest
