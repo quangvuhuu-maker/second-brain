@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, Target, Activity, Settings, TrendingUp, UserCircle, ScrollText } from "lucide-react";
+import { LayoutDashboard, Target, Activity, Settings, TrendingUp, UserCircle, ScrollText, Brain } from "lucide-react";
 
 const navItems = [
   { href: "/", icon: LayoutDashboard, label: "Dashboard" },
   { href: "/recommendations", icon: TrendingUp, label: "AI Recommendations" },
+  { href: "/stock-evaluate", icon: Brain, label: "Đánh giá CP" },
   { href: "/recommendation-logs", icon: ScrollText, label: "Nhật ký KN" },
   { href: "/tasks", icon: Target, label: "Ad-hoc Tasks" },
   { href: "/profile", icon: UserCircle, label: "Trang cá nhân" },
