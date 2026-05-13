@@ -59,6 +59,9 @@ export async function GET(request: NextRequest) {
     const stocks = await fetchStockData(forceRefresh);
     const news = await fetchMacroNews();
 
+    const stocksMap = new Map();
+    stocks.forEach((s: any) => stocksMap.set(s.symbol, s.price));
+
     const stocksText = stocks.map((s: any) => `${s.symbol}|${s.price}|${s.volume}|${s.trend}|${s.rsi}|${s.macd}|${s.obvTrend}|${s.bbWidth}`).join("\n");
     const newsText = news.map((n: any) => `- ${n.title} (${n.time}): ${n.summary}`).join("\n");
 
@@ -114,8 +117,9 @@ export async function GET(request: NextRequest) {
       ]
     }
     Lưu ý: Bạn phải chọn ĐÚNG 10 mã Mua và ĐÚNG 10 mã Bán từ danh sách Cổ phiếu trên. Cung cấp cụ thể:
-    - Mua: Vùng giá mua (entryPrice), Chốt lời (targetPrice), Cắt lỗ (stopLossPrice).
-    - Bán: Vùng giá bán/cắt lỗ (sellPrice), Chờ mua lại ở (targetPrice).
+    - Mua: Vùng giá mua (entryPrice) BẮT BUỘC phải sát với Giá hiện tại (Price) trong dữ liệu (bằng hoặc lệch tối đa 1%), Chốt lời (targetPrice), Cắt lỗ (stopLossPrice).
+    - Bán: Vùng giá bán/cắt lỗ (sellPrice) BẮT BUỘC phải sát với Giá hiện tại (Price) trong dữ liệu (bằng hoặc lệch tối đa 1%), Chờ mua lại ở (targetPrice).
+    TUYỆT ĐỐI KHÔNG tự bịa ra giá khuyến nghị cách xa giá hiện tại. Ví dụ giá trong dữ liệu đang 20.0 thì entryPrice/sellPrice chỉ được dao động 19.8 - 20.2.
     `;
 
     // Fetch API keys from settings
@@ -160,21 +164,27 @@ export async function GET(request: NextRequest) {
       const logEntry = {
         date: vnDate,
         createdAt: FieldValue.serverTimestamp(),
-        topBuys: (analysisData.topBuys || []).map((s: Record<string, unknown>) => ({
-          symbol: s.symbol,
-          entryPrice: s.entryPrice,
-          targetPrice: s.targetPrice,
-          stopLossPrice: s.stopLossPrice,
-          currentPrice: s.currentPrice,
-          upsidePercent: s.upsidePercent,
-        })),
-        topSells: (analysisData.topSells || []).map((s: Record<string, unknown>) => ({
-          symbol: s.symbol,
-          sellPrice: s.sellPrice,
-          targetPrice: s.targetPrice,
-          currentPrice: s.currentPrice,
-          downsidePercent: s.downsidePercent,
-        })),
+        topBuys: (analysisData.topBuys || []).map((s: Record<string, unknown>) => {
+          const actualPrice = stocksMap.get(s.symbol as string);
+          return {
+            symbol: s.symbol,
+            entryPrice: actualPrice || s.entryPrice,
+            targetPrice: s.targetPrice,
+            stopLossPrice: s.stopLossPrice,
+            currentPrice: actualPrice || s.currentPrice,
+            upsidePercent: s.upsidePercent,
+          };
+        }),
+        topSells: (analysisData.topSells || []).map((s: Record<string, unknown>) => {
+          const actualPrice = stocksMap.get(s.symbol as string);
+          return {
+            symbol: s.symbol,
+            sellPrice: actualPrice || s.sellPrice,
+            targetPrice: s.targetPrice,
+            currentPrice: actualPrice || s.currentPrice,
+            downsidePercent: s.downsidePercent,
+          };
+        }),
       };
       await adminDb.collection("recommendation_logs").doc(vnDate).set(logEntry);
     } catch (logErr) {
