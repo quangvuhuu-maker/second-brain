@@ -61,6 +61,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               setLoading(false);
             }
           }
+        }, (error) => {
+          console.error("Firestore onSnapshot error:", error);
+          setLoading(false);
+          setUserStatus(null);
         });
       } else {
         setUser(null);
