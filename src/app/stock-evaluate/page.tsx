@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import {
   Search, Loader2, TrendingUp, TrendingDown, Minus, ShieldAlert,
-  Target, BarChart2, Activity, AlertTriangle, ArrowDownRight, ArrowUpRight, Brain
+  Target, BarChart2, Activity, AlertTriangle, ArrowDownRight, ArrowUpRight, Brain, RefreshCw, Clock
 } from "lucide-react";
 
 interface TechnicalAnalysis {
@@ -92,18 +92,24 @@ export default function StockEvaluatePage() {
   const [evaluation, setEvaluation] = useState<Evaluation | null>(null);
   const [stockData, setStockData] = useState<StockRawData | null>(null);
 
-  const handleEvaluate = async () => {
+  const [fromCache, setFromCache] = useState(false);
+
+  const handleEvaluate = async (refresh = false) => {
     if (!symbol.trim()) return;
     setLoading(true);
     setError("");
-    setEvaluation(null);
-    setStockData(null);
+    if (refresh) {
+      setEvaluation(null);
+      setStockData(null);
+    }
     try {
-      const res = await fetch(`/api/stock-evaluate?symbol=${symbol.trim().toUpperCase()}`);
+      const refreshParam = refresh ? "&refresh=true" : "";
+      const res = await fetch(`/api/stock-evaluate?symbol=${symbol.trim().toUpperCase()}${refreshParam}`);
       const json = await res.json();
       if (!json.success) throw new Error(json.error);
       setEvaluation(json.data);
       setStockData(json.stockData);
+      setFromCache(json.fromCache || false);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Unknown error";
       setError(message);
@@ -125,7 +131,7 @@ export default function StockEvaluatePage() {
       </div>
 
       {/* Search Bar */}
-      <div className="flex gap-3 max-w-lg">
+      <div className="flex gap-3 max-w-xl">
         <Input
           placeholder="Nhập mã CP (VD: VCB, FPT, HPG...)"
           value={symbol}
@@ -133,11 +139,25 @@ export default function StockEvaluatePage() {
           onKeyDown={(e) => e.key === "Enter" && handleEvaluate()}
           className="text-lg font-semibold tracking-wider"
         />
-        <Button onClick={handleEvaluate} disabled={loading || !symbol.trim()} size="lg">
+        <Button onClick={() => handleEvaluate()} disabled={loading || !symbol.trim()} size="lg">
           {loading ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <Search className="mr-2 h-5 w-5" />}
           Đánh giá
         </Button>
+        {evaluation && (
+          <Button onClick={() => handleEvaluate(true)} disabled={loading} variant="outline" size="lg" title="Phân tích lại (bỏ cache)">
+            <RefreshCw className={`h-5 w-5 ${loading ? 'animate-spin' : ''}`} />
+          </Button>
+        )}
       </div>
+
+      {/* Cache indicator */}
+      {fromCache && evaluation && !loading && (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground -mt-4">
+          <Clock className="h-3 w-3" />
+          <span>Kết quả từ cache trong ngày.</span>
+          <button onClick={() => handleEvaluate(true)} className="text-primary underline hover:no-underline">Phân tích lại</button>
+        </div>
+      )}
 
       {/* Error */}
       {error && (
@@ -147,12 +167,18 @@ export default function StockEvaluatePage() {
         </div>
       )}
 
-      {/* Loading skeleton */}
+      {/* Loading */}
       {loading && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-pulse">
-          <Card className="lg:col-span-1 h-64 bg-muted/50 border-none"></Card>
-          <Card className="lg:col-span-2 h-64 bg-muted/50 border-none"></Card>
-          <Card className="lg:col-span-3 h-48 bg-muted/50 border-none"></Card>
+        <div className="space-y-4">
+          <div className="flex items-center gap-3 text-muted-foreground">
+            <Loader2 className="h-5 w-5 animate-spin text-primary" />
+            <span className="text-sm">Đang phân tích <span className="font-bold text-foreground">{symbol}</span>... (có thể mất 10-30 giây)</span>
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-pulse">
+            <Card className="lg:col-span-1 h-64 bg-muted/50 border-none"></Card>
+            <Card className="lg:col-span-2 h-64 bg-muted/50 border-none"></Card>
+            <Card className="lg:col-span-3 h-48 bg-muted/50 border-none"></Card>
+          </div>
         </div>
       )}
 

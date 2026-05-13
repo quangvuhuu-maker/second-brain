@@ -8,6 +8,9 @@ import { FieldValue } from "firebase-admin/firestore";
 const CACHE_DOC = "deep-recommendations";
 const CACHE_COLLECTION = "ai_cache";
 
+// Tăng timeout cho Vercel serverless (cho phép chạy tới 60 giây)
+export const maxDuration = 60;
+
 function isCacheToday(cachedAt: string | undefined): boolean {
   if (!cachedAt) return false;
   const cachedDate = new Date(cachedAt);

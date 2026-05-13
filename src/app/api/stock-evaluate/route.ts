@@ -3,11 +3,25 @@ import { generateContentWithFallback } from "@/lib/gemini";
 import { fetchStockData, fetchMacroNews } from "@/lib/market-data";
 import { adminDb } from "@/lib/firebase-admin";
 import { safeParseJSON } from "@/lib/safe-parse-json";
+import { FieldValue } from "firebase-admin/firestore";
+
+// Tăng timeout cho Vercel serverless (cho phép chạy tới 60 giây)
+export const maxDuration = 60;
+
+const CACHE_COLLECTION = "ai_cache";
+
+function getVNDateString(): string {
+  const now = new Date();
+  const vnOffset = 7 * 60;
+  const vnDate = new Date(now.getTime() + vnOffset * 60000);
+  return vnDate.toISOString().slice(0, 10);
+}
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const symbol = searchParams.get("symbol")?.toUpperCase().trim();
+    const forceRefresh = searchParams.get("refresh") === "true";
 
     if (!symbol) {
       return NextResponse.json(
@@ -16,87 +30,47 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Lấy dữ liệu thị trường từ Backend Python
-    const stocks = await fetchStockData(false);
-    const news = await fetchMacroNews();
+    const vnDate = getVNDateString();
+    const cacheDocId = `stock-evaluate-${symbol}-${vnDate}`;
+
+    // Kiểm tra cache trong ngày (trả về ngay nếu đã đánh giá rồi)
+    if (!forceRefresh) {
+      try {
+        const cacheDoc = await adminDb.collection(CACHE_COLLECTION).doc(cacheDocId).get();
+        if (cacheDoc.exists) {
+          const cached = cacheDoc.data();
+          return NextResponse.json({
+            success: true,
+            data: cached?.evaluation,
+            stockData: cached?.stockData,
+            fromCache: true,
+            cachedAt: cached?.cachedAt?.toDate?.()?.toISOString() || cached?.cachedAt,
+          });
+        }
+      } catch (cacheErr) {
+        console.warn("Cache read failed:", cacheErr);
+      }
+    }
+
+    // Lấy dữ liệu song song để tiết kiệm thời gian
+    const [stocks, news] = await Promise.all([
+      fetchStockData(false),
+      fetchMacroNews()
+    ]);
 
     // Tìm cổ phiếu trong danh sách
     const stockData = stocks.find((s: any) => s.symbol === symbol);
 
     if (!stockData) {
       return NextResponse.json(
-        { success: false, error: `Không tìm thấy mã cổ phiếu "${symbol}" trong danh sách theo dõi. Vui lòng thử mã khác.` },
+        { success: false, error: `Không tìm thấy mã "${symbol}" trong danh sách theo dõi (150+ mã). Vui lòng thử mã khác.` },
         { status: 404 }
       );
     }
 
     const newsText = news.slice(0, 5).map((n: any) => `- ${n.title}: ${n.summary}`).join("\n");
 
-    const prompt = `
-    Bạn là chuyên gia phân tích chứng khoán cao cấp tại Việt Nam, sử dụng phương pháp Smart Money Concept (SMC) và Volume Spread Analysis (VSA).
-    
-    Hãy ĐÁNH GIÁ CHI TIẾT cổ phiếu ${symbol} dựa trên dữ liệu kỹ thuật và vĩ mô sau:
-
-    === DỮ LIỆU KỸ THUẬT ===
-    Mã: ${stockData.symbol}
-    Giá hiện tại: ${stockData.price}
-    Thay đổi: ${stockData.changePercent}%
-    Khối lượng: ${stockData.volume}
-    MA20: ${stockData.movingAverage20}
-    Xu hướng: ${stockData.trend}
-    RSI (14): ${stockData.rsi}
-    MACD/Signal: ${stockData.macd}
-    OBV Trend: ${stockData.obvTrend}
-    Bollinger Bands: ${stockData.bbWidth}
-    Hỗ trợ (20D Low): ${stockData.support || 'N/A'}
-    Kháng cự (20D High): ${stockData.resistance || 'N/A'}
-    SMC Signal: ${stockData.smcSignal || 'None'}
-    VSA Signal: ${stockData.vsaSignal || 'None'}
-
-    === TIN TỨC VĨ MÔ GẦN NHẤT ===
-    ${newsText}
-
-    YÊU CẦU: Hãy đánh giá cổ phiếu này và trả về ĐÚNG JSON format sau (không markdown):
-    {
-      "symbol": "${symbol}",
-      "overallScore": 0,
-      "overallRating": "Mua mạnh / Mua / Trung lập / Bán / Bán mạnh",
-      "priceTarget": 0,
-      "stopLoss": 0,
-      "technicalAnalysis": {
-        "trendScore": 0,
-        "trendComment": "Nhận xét xu hướng...",
-        "momentumScore": 0,
-        "momentumComment": "Nhận xét RSI, MACD...",
-        "volumeScore": 0,
-        "volumeComment": "Nhận xét OBV, Volume...",
-        "smcComment": "Phân tích SMC chi tiết (FVG, BOS, CHoCH, Support/Resistance)...",
-        "vsaComment": "Phân tích VSA chi tiết (SOS/SOW, Spread, Volume Profile)..."
-      },
-      "fundamentalAnalysis": {
-        "macroScore": 0,
-        "macroComment": "Tác động vĩ mô đến cổ phiếu này...",
-        "sectorComment": "Nhận xét ngành..."
-      },
-      "tradingPlan": {
-        "entryPoint": "Mô tả điểm vào lệnh tốt nhất...",
-        "dcaPoint": "Mô tả điểm trung bình giá nếu giá giảm...",
-        "scaleInPoint": "Mô tả điểm mua gia tăng nếu breakout...",
-        "stopLossPoint": "Mô tả mức cắt lỗ cứng...",
-        "takeProfitPoint": "Mô tả mức chốt lời..."
-      },
-      "risks": ["Rủi ro 1...", "Rủi ro 2..."],
-      "summary": "Tóm tắt ngắn gọn quan điểm đầu tư trong 2-3 câu..."
-    }
-
-    Quy tắc chấm điểm:
-    - overallScore: Thang 0-100 (0 = cực kỳ tiêu cực, 100 = cực kỳ tích cực)
-    - trendScore, momentumScore, volumeScore, macroScore: Thang 0-100
-    - priceTarget: Mục tiêu giá trong 1-3 tháng (KIỂU SỐ, đơn vị VND)
-    - stopLoss: Mức cắt lỗ khuyến nghị (KIỂU SỐ, đơn vị VND)
-    `;
-
-    // Fetch API keys
+    // Fetch API keys song song với việc chuẩn bị prompt
     let apiKeys: string[] = [];
     try {
       const settingsDoc = await adminDb.collection("settings").doc("api_keys").get();
@@ -106,6 +80,49 @@ export async function GET(request: NextRequest) {
     } catch (e) {
       console.warn("Failed to fetch API keys from settings", e);
     }
+
+    const prompt = `
+    Bạn là chuyên gia phân tích chứng khoán cao cấp tại Việt Nam, sử dụng phương pháp Smart Money Concept (SMC) và Volume Spread Analysis (VSA).
+    Đánh giá NGẮN GỌN nhưng SẮC BÉN cổ phiếu ${symbol}:
+
+    DỮ LIỆU: Giá=${stockData.price} | Δ=${stockData.changePercent}% | Vol=${stockData.volume} | MA20=${stockData.movingAverage20} | Trend=${stockData.trend} | RSI=${stockData.rsi} | MACD=${stockData.macd} | OBV=${stockData.obvTrend} | BB=${stockData.bbWidth} | Support=${stockData.support || 'N/A'} | Resistance=${stockData.resistance || 'N/A'} | SMC=${stockData.smcSignal || 'None'} | VSA=${stockData.vsaSignal || 'None'}
+
+    VĨ MÔ: ${newsText}
+
+    Trả về ĐÚNG JSON (không markdown):
+    {
+      "symbol": "${symbol}",
+      "overallScore": 0,
+      "overallRating": "Mua mạnh / Mua / Trung lập / Bán / Bán mạnh",
+      "priceTarget": 0,
+      "stopLoss": 0,
+      "technicalAnalysis": {
+        "trendScore": 0,
+        "trendComment": "...",
+        "momentumScore": 0,
+        "momentumComment": "...",
+        "volumeScore": 0,
+        "volumeComment": "...",
+        "smcComment": "...",
+        "vsaComment": "..."
+      },
+      "fundamentalAnalysis": {
+        "macroScore": 0,
+        "macroComment": "...",
+        "sectorComment": "..."
+      },
+      "tradingPlan": {
+        "entryPoint": "...",
+        "dcaPoint": "...",
+        "scaleInPoint": "...",
+        "stopLossPoint": "...",
+        "takeProfitPoint": "..."
+      },
+      "risks": ["..."],
+      "summary": "..."
+    }
+    Điểm 0-100. priceTarget/stopLoss là SỐ (VND). Trả lời ngắn gọn, đi thẳng vào trọng tâm.
+    `;
 
     const requestContent = {
       contents: [{ role: "user", parts: [{ text: prompt }] }],
@@ -118,24 +135,38 @@ export async function GET(request: NextRequest) {
     const responseText = result.response.text();
     const evaluation = safeParseJSON(responseText);
 
+    const stockDataResponse = {
+      symbol: stockData.symbol,
+      price: stockData.price,
+      changePercent: stockData.changePercent,
+      volume: stockData.volume,
+      trend: stockData.trend,
+      rsi: stockData.rsi,
+      macd: stockData.macd,
+      obvTrend: stockData.obvTrend,
+      bbWidth: stockData.bbWidth,
+      support: stockData.support,
+      resistance: stockData.resistance,
+      smcSignal: stockData.smcSignal,
+      vsaSignal: stockData.vsaSignal,
+    };
+
+    // Lưu cache vào Firestore để lần sau trả về tức thì
+    try {
+      await adminDb.collection(CACHE_COLLECTION).doc(cacheDocId).set({
+        evaluation,
+        stockData: stockDataResponse,
+        cachedAt: FieldValue.serverTimestamp(),
+      });
+    } catch (cacheErr) {
+      console.warn("Cache write failed:", cacheErr);
+    }
+
     return NextResponse.json({
       success: true,
       data: evaluation,
-      stockData: {
-        symbol: stockData.symbol,
-        price: stockData.price,
-        changePercent: stockData.changePercent,
-        volume: stockData.volume,
-        trend: stockData.trend,
-        rsi: stockData.rsi,
-        macd: stockData.macd,
-        obvTrend: stockData.obvTrend,
-        bbWidth: stockData.bbWidth,
-        support: stockData.support,
-        resistance: stockData.resistance,
-        smcSignal: stockData.smcSignal,
-        vsaSignal: stockData.vsaSignal,
-      }
+      stockData: stockDataResponse,
+      fromCache: false,
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Unknown error";
