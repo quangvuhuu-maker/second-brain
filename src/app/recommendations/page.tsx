@@ -14,6 +14,10 @@ interface Recommendation {
   sellPrice?: number;
   targetPrice: number;
   stopLossPrice?: number;
+  entryPointDesc?: string;
+  dcaPoint?: string;
+  scaleInPoint?: string;
+  stopLossPoint?: string;
   upsidePercent?: number;
   downsidePercent?: number;
   technicalReason: string;
@@ -138,9 +142,28 @@ export default function RecommendationsPage() {
                           </CardDescription>
                         </div>
                         <div className="text-right">
-                          <div className="text-sm text-muted-foreground">Mua: <span className="text-foreground font-semibold">{stock.entryPrice?.toLocaleString('vi-VN')}</span></div>
-                          <div className="text-sm text-muted-foreground mt-1">Chốt lời: <span className="text-emerald-500 font-bold">{stock.targetPrice?.toLocaleString('vi-VN')}</span></div>
-                          <div className="text-sm text-muted-foreground mt-1">Cắt lỗ: <span className="text-rose-500 font-semibold">{stock.stopLossPrice?.toLocaleString('vi-VN')}</span></div>
+                          <div className="text-sm text-emerald-500 font-bold">Mục tiêu (Chốt lời): {stock.targetPrice?.toLocaleString('vi-VN')}</div>
+                        </div>
+                      </div>
+                      
+                      <div className="mt-4 bg-muted/20 p-3 rounded-lg border border-border/50 text-sm">
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-1">
+                            <span className="text-muted-foreground text-xs block font-medium">Điểm vào lệnh</span>
+                            <span className="font-medium text-foreground">{stock.entryPointDesc || stock.entryPrice?.toLocaleString('vi-VN')}</span>
+                          </div>
+                          <div className="space-y-1">
+                            <span className="text-muted-foreground text-xs block font-medium">Trung bình giá (DCA)</span>
+                            <span className="font-medium text-foreground">{stock.dcaPoint || '-'}</span>
+                          </div>
+                          <div className="space-y-1">
+                            <span className="text-muted-foreground text-xs block font-medium">Mua gia tăng</span>
+                            <span className="font-medium text-foreground">{stock.scaleInPoint || '-'}</span>
+                          </div>
+                          <div className="space-y-1">
+                            <span className="text-rose-500/70 text-xs block font-medium">Cắt lỗ cứng (Stop Loss)</span>
+                            <span className="font-bold text-rose-500">{stock.stopLossPoint || stock.stopLossPrice?.toLocaleString('vi-VN')}</span>
+                          </div>
                         </div>
                       </div>
                       <div className="mt-4 space-y-1">

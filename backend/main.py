@@ -89,6 +89,9 @@ def update_stock_cache():
                 else: trend = "Sideway"
                 
                 close_prices = df['Close']
+                open_prices = df['Open']
+                high_prices = df['High']
+                low_prices = df['Low']
                 volume_data = df['Volume']
                 
                 # RSI 14
@@ -123,6 +126,50 @@ def update_stock_cache():
                     obv_trend = "Up" if current_obv > prev_obv else "Down" if current_obv < prev_obv else "Flat"
                 else:
                     obv_trend = "Flat"
+                    
+                # SMC (Smart Money Concept) & Support/Resistance
+                # 20-day Swing High / Swing Low
+                support_level = round(float(low_prices.tail(20).min()), 2)
+                resistance_level = round(float(high_prices.tail(20).max()), 2)
+                
+                # FVG (Fair Value Gap) on the last 3 candles
+                smc_signal = "None"
+                if len(df) >= 3:
+                    # Bullish FVG: Low of candle 3 > High of candle 1
+                    if low_prices.iloc[-1] > high_prices.iloc[-3] and close_prices.iloc[-2] > open_prices.iloc[-2]:
+                        smc_signal = "Bullish FVG"
+                    # Bearish FVG: High of candle 3 < Low of candle 1
+                    elif high_prices.iloc[-1] < low_prices.iloc[-3] and close_prices.iloc[-2] < open_prices.iloc[-2]:
+                        smc_signal = "Bearish FVG"
+                        
+                # BOS/CHoCH proxy: Breakout of 10-day high/low
+                if smc_signal == "None" and len(df) >= 10:
+                    if close_prices.iloc[-1] > high_prices.iloc[-11:-1].max():
+                        smc_signal = "Bullish BOS/CHoCH"
+                    elif close_prices.iloc[-1] < low_prices.iloc[-11:-1].min():
+                        smc_signal = "Bearish BOS/CHoCH"
+                        
+                # VSA (Volume Spread Analysis)
+                vsa_signal = "None"
+                vol_ma20 = volume_data.rolling(20).mean().iloc[-1] if len(volume_data) >= 20 else volume_data.mean()
+                if vol_ma20 > 0:
+                    current_vol = volume_data.iloc[-1]
+                    spread = high_prices.iloc[-1] - low_prices.iloc[-1]
+                    avg_spread = (high_prices - low_prices).tail(20).mean()
+                    is_high_vol = current_vol > (1.5 * vol_ma20)
+                    is_wide_spread = spread > (1.5 * avg_spread)
+                    
+                    # Spread calculations for pinbars/wicks
+                    if spread > 0:
+                        upper_wick_pct = (high_prices.iloc[-1] - max(open_prices.iloc[-1], close_prices.iloc[-1])) / spread
+                        lower_wick_pct = (min(open_prices.iloc[-1], close_prices.iloc[-1]) - low_prices.iloc[-1]) / spread
+                        
+                        # SOS (Sign of Strength): High Vol + Long lower wick (Spring) OR High Vol + Wide up spread
+                        if is_high_vol and (lower_wick_pct > 0.5 or (is_wide_spread and close_prices.iloc[-1] > open_prices.iloc[-1])):
+                            vsa_signal = "SOS (Sign of Strength)"
+                        # SOW (Sign of Weakness): High Vol + Long upper wick (Upthrust) OR High Vol + Wide down spread
+                        elif is_high_vol and (upper_wick_pct > 0.5 or (is_wide_spread and close_prices.iloc[-1] < open_prices.iloc[-1])):
+                            vsa_signal = "SOW (Sign of Weakness)"
                 
                 results.append({
                     "symbol": symbol,
@@ -134,7 +181,11 @@ def update_stock_cache():
                     "rsi": rsi,
                     "macd": f"{macd}/{signal}",
                     "obvTrend": obv_trend,
-                    "bbWidth": bb_width
+                    "bbWidth": bb_width,
+                    "support": support_level,
+                    "resistance": resistance_level,
+                    "smcSignal": smc_signal,
+                    "vsaSignal": vsa_signal
                 })
         except Exception as e:
             print(f"Error processing {symbol}: {e}")

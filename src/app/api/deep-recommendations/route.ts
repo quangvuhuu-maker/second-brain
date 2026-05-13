@@ -62,7 +62,7 @@ export async function GET(request: NextRequest) {
     const stocksMap = new Map();
     stocks.forEach((s: any) => stocksMap.set(s.symbol, s.price));
 
-    const stocksText = stocks.map((s: any) => `${s.symbol}|${s.price}|${s.volume}|${s.trend}|${s.rsi}|${s.macd}|${s.obvTrend}|${s.bbWidth}`).join("\n");
+    const stocksText = stocks.map((s: any) => `${s.symbol}|${s.price}|${s.volume}|${s.trend}|${s.rsi}|${s.macd}|${s.obvTrend}|${s.bbWidth}|${s.support}|${s.resistance}|${s.smcSignal}|${s.vsaSignal}`).join("\n");
     const newsText = news.map((n: any) => `- ${n.title} (${n.time}): ${n.summary}`).join("\n");
 
     const prompt = `
@@ -70,25 +70,24 @@ export async function GET(request: NextRequest) {
     Nhiệm vụ của bạn là phân tích rổ cổ phiếu siêu thanh khoản (150+ mã chọn lọc từ HSX, HNX, UPCOM) và tin tức vĩ mô mới nhất để chọn ra Top 10 cổ phiếu KHUYẾN NGHỊ MUA và Top 10 cổ phiếu KHUYẾN NGHỊ BÁN/CẮT LỖ.
 
     DỮ LIỆU CỔ PHIẾU (Đã được lọc sơ bộ):
-    [Symbol | Price | Vol | Trend | RSI | MACD/Signal | OBV_Trend | BB_Width]
+    [Symbol | Price | Vol | Trend | RSI | MACD | OBV | BB | Support | Resistance | SMC_Signal | VSA_Signal]
     ${stocksText}
     
     TIN TỨC VĨ MÔ & THỊ TRƯỜNG:
     ${newsText}
     
-    TIÊU CHÍ LỌC (KHUYẾN NGHỊ MUA) - BẮT BUỘC ÁP DỤNG CHECKLIST "LỆNH MUA ĐIỂM 10":
-    1. Cổ phiếu có dư địa tăng tốt, thuộc ngành nghề tiềm năng, vĩ mô ủng hộ.
-    2. Kỹ thuật: RSI nằm trong khoảng 50-60 (đang lấy đà).
-    3. Kỹ thuật: MACD cắt lên Signal Line (MACD > Signal).
-    4. Kỹ thuật: OBV dốc lên (OBV_Trend = Up) cho thấy dòng tiền vào.
-    5. Kỹ thuật: Bollinger Bands (BB) thắt nút cổ chai (BB_Width = Tight) chuẩn bị bứt phá.
-    * BẮT BUỘC loại bỏ các mã bị phân kỳ âm RSI hoặc MACD cắt xuống (kể cả khi giá vẫn nằm trên MA20).
+    TIÊU CHÍ LỌC (KHUYẾN NGHỊ MUA) - BẮT BUỘC ÁP DỤNG CHECKLIST "LỆNH MUA SMC/VSA":
+    1. Ưu tiên các mã có tín hiệu VSA "SOS (Sign of Strength)" hoặc SMC "Bullish FVG", "Bullish BOS/CHoCH".
+    2. Cổ phiếu có dư địa tăng tốt, nằm gần vùng Hỗ trợ (Support), vĩ mô ủng hộ.
+    3. Kỹ thuật: RSI nằm trong khoảng 50-60 (đang lấy đà) hoặc MACD cắt lên Signal Line.
+    4. Kỹ thuật: OBV dốc lên (Up) cho thấy dòng tiền vào gom hàng.
+    * BẮT BUỘC loại bỏ các mã bị phân kỳ âm RSI hoặc đang có tín hiệu phân phối VSA "SOW".
 
     TIÊU CHÍ LỌC (KHUYẾN NGHỊ BÁN):
-    1. Cổ phiếu gãy trend, thủng MA20, vĩ mô không ủng hộ.
-    2. Kỹ thuật: RSI quá mua (> 70) hoặc gãy (< 40).
-    3. Kỹ thuật: MACD cắt xuống Signal Line (MACD < Signal).
-    4. Kỹ thuật: OBV đi ngang hoặc dốc xuống (OBV_Trend = Flat/Down) thể hiện dòng tiền rút ra.
+    1. Ưu tiên các mã có tín hiệu VSA "SOW (Sign of Weakness)" hoặc SMC "Bearish FVG".
+    2. Cổ phiếu gãy trend, thủng vùng Hỗ trợ (Support), vĩ mô không ủng hộ.
+    3. Kỹ thuật: RSI quá mua (> 70) hoặc MACD cắt xuống Signal Line.
+    4. Kỹ thuật: OBV đi ngang hoặc dốc xuống (Flat/Down) thể hiện dòng tiền phân phối rút ra.
 
     YÊU CẦU ĐẦU RA: Trả về ĐÚNG định dạng JSON sau (không chứa markdown \`\`\`json):
     {
@@ -97,10 +96,13 @@ export async function GET(request: NextRequest) {
           "symbol": "Mã CP",
           "currentPrice": 0,
           "entryPrice": 0,
+          "entryPointDesc": "Mô tả điểm vào lệnh an toàn (gần giá hiện tại)",
+          "dcaPoint": "Mô tả điểm trung bình giá (nếu thủng về hỗ trợ sâu hơn)",
+          "scaleInPoint": "Mô tả điểm gia tăng (nếu break cản)",
+          "stopLossPoint": "Mô tả điểm cắt lỗ cứng khi thủng hỗ trợ mạnh",
           "targetPrice": 0,
-          "stopLossPrice": 0,
           "upsidePercent": 0,
-          "technicalReason": "Phân tích kỹ thuật chi tiết...",
+          "technicalReason": "Phân tích SMC/VSA và Kỹ thuật chi tiết...",
           "fundamentalReason": "Phân tích cơ bản/vĩ mô..."
         }
       ],
@@ -111,15 +113,13 @@ export async function GET(request: NextRequest) {
           "sellPrice": 0,
           "targetPrice": 0,
           "downsidePercent": 0,
-          "technicalReason": "Phân tích kỹ thuật chi tiết...",
+          "technicalReason": "Phân tích SMC/VSA và Kỹ thuật chi tiết...",
           "fundamentalReason": "Phân tích cơ bản/vĩ mô..."
         }
       ]
     }
-    Lưu ý: Bạn phải chọn ĐÚNG 10 mã Mua và ĐÚNG 10 mã Bán từ danh sách Cổ phiếu trên. Cung cấp cụ thể:
-    - Mua: Vùng giá mua (entryPrice) BẮT BUỘC phải sát với Giá hiện tại (Price) trong dữ liệu (bằng hoặc lệch tối đa 1%), Chốt lời (targetPrice), Cắt lỗ (stopLossPrice).
-    - Bán: Vùng giá bán/cắt lỗ (sellPrice) BẮT BUỘC phải sát với Giá hiện tại (Price) trong dữ liệu (bằng hoặc lệch tối đa 1%), Chờ mua lại ở (targetPrice).
-    TUYỆT ĐỐI KHÔNG tự bịa ra giá khuyến nghị cách xa giá hiện tại. Ví dụ giá trong dữ liệu đang 20.0 thì entryPrice/sellPrice chỉ được dao động 19.8 - 20.2.
+    Lưu ý: Bạn phải chọn ĐÚNG 10 mã Mua và ĐÚNG 10 mã Bán từ danh sách Cổ phiếu trên. 
+    Trường "entryPrice" và "sellPrice" phải là KIỂU SỐ (NUMBER) BẮT BUỘC sát với Giá hiện tại trong dữ liệu (bằng hoặc lệch tối đa 1%) để hệ thống tracking. Các trường entryPointDesc, dcaPoint, v.v. dùng để cung cấp chi tiết bằng Text.
     `;
 
     // Fetch API keys from settings
@@ -169,10 +169,15 @@ export async function GET(request: NextRequest) {
           return {
             symbol: s.symbol,
             entryPrice: actualPrice || s.entryPrice,
+            entryPointDesc: s.entryPointDesc,
+            dcaPoint: s.dcaPoint,
+            scaleInPoint: s.scaleInPoint,
+            stopLossPoint: s.stopLossPoint,
             targetPrice: s.targetPrice,
-            stopLossPrice: s.stopLossPrice,
             currentPrice: actualPrice || s.currentPrice,
             upsidePercent: s.upsidePercent,
+            technicalReason: s.technicalReason,
+            fundamentalReason: s.fundamentalReason,
           };
         }),
         topSells: (analysisData.topSells || []).map((s: Record<string, unknown>) => {
