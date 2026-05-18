@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { TrendingUp, TrendingDown, Minus, RefreshCw, Loader2, Clock } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
@@ -33,29 +33,38 @@ export function MarketAnalysis() {
   const [error, setError] = useState("");
   const [cachedAt, setCachedAt] = useState<string | null>(null);
   const [fromCache, setFromCache] = useState(false);
+  const [isStale, setIsStale] = useState(false);
 
-  const fetchAnalysis = async (refresh = false) => {
+  const fetchAnalysis = useCallback(async (refresh = false) => {
     setLoading(true);
     setError("");
     try {
       const url = refresh ? "/api/analyze-market?refresh=true" : "/api/analyze-market";
-      const res = await fetch(url);
+      const res = await fetch(url, {
+        signal: AbortSignal.timeout(90000), // 90s timeout phía client
+      });
       const json = await res.json();
       if (!json.success) throw new Error(json.error);
       setData(json.data);
       setCachedAt(json.cachedAt || null);
       setFromCache(json.fromCache || false);
+      setIsStale(json.stale || false);
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Unknown error";
+      let message = "Unknown error";
+      if (err instanceof DOMException && err.name === "TimeoutError") {
+        message = "Kết nối quá lâu (timeout). Backend có thể đang khởi động, vui lòng thử lại sau 1-2 phút.";
+      } else if (err instanceof Error) {
+        message = err.message;
+      }
       setError(message);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchAnalysis(false);
-  }, []);
+  }, [fetchAnalysis]);
 
   if (loading && !data) {
     return (
@@ -100,8 +109,12 @@ export function MarketAnalysis() {
               {fromCache ? "Dữ liệu cache từ" : "Cập nhật lúc"}: {formatCachedTime(cachedAt)}
             </span>
             {fromCache && (
-              <span className="bg-amber-500/10 text-amber-500 px-2 py-0.5 rounded-full text-[10px] font-medium">
-                CACHE
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${
+                isStale
+                  ? "bg-orange-500/10 text-orange-500"
+                  : "bg-amber-500/10 text-amber-500"
+              }`}>
+                {isStale ? "STALE CACHE" : "CACHE"}
               </span>
             )}
           </div>

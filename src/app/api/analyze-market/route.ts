@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { geminiModel, generateContentWithFallback } from "@/lib/gemini";
+import { generateContentWithFallback } from "@/lib/gemini";
 import { fetchStockData, fetchMacroNews } from "@/lib/market-data";
 import { adminDb } from "@/lib/firebase-admin";
 import { safeParseJSON } from "@/lib/safe-parse-json";
 import { FieldValue } from "firebase-admin/firestore";
+
+// Tăng thời gian chạy tối đa cho Vercel serverless function
+export const maxDuration = 60;
 
 const CACHE_DOC = "market-analysis";
 const CACHE_COLLECTION = "ai_cache";
@@ -27,6 +30,9 @@ function isCacheToday(cachedAt: string | undefined): boolean {
 }
 
 export async function GET(request: NextRequest) {
+  // Biến lưu stale cache để fallback khi lỗi
+  let staleCache: { data: any; cachedAt: string } | null = null;
+
   try {
     const { searchParams } = new URL(request.url);
     const forceRefresh = searchParams.get("refresh") === "true";
@@ -37,6 +43,12 @@ export async function GET(request: NextRequest) {
       if (cacheDoc.exists) {
         const cached = cacheDoc.data();
         const cachedAt = cached?.cachedAt?.toDate?.()?.toISOString() || cached?.cachedAt;
+
+        // Lưu stale cache để fallback
+        if (cached?.data) {
+          staleCache = { data: cached.data, cachedAt };
+        }
+
         // Trả cache nếu không ép refresh
         if (!forceRefresh && isCacheToday(cachedAt)) {
           return NextResponse.json({
@@ -60,8 +72,11 @@ export async function GET(request: NextRequest) {
       console.warn("Cache read failed:", cacheErr);
     }
 
-    const stocks = await fetchStockData(forceRefresh);
-    const news = await fetchMacroNews();
+    // Fetch song song stock data và news để giảm thời gian chờ
+    const [stocks, news] = await Promise.all([
+      fetchStockData(forceRefresh),
+      fetchMacroNews(),
+    ]);
 
     const stocksText = stocks.map((s: any) => `${s.symbol}|${s.price}|${s.changePercent}%|Vol:${s.volume}|MA20:${s.movingAverage20}|${s.trend}`).join("\n");
     const newsText = news.map((n: any) => `- ${n.title} (${n.time}): ${n.summary}`).join("\n");
@@ -147,6 +162,19 @@ export async function GET(request: NextRequest) {
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Unknown error";
     console.error("Market Analysis Error:", message);
+
+    // Fallback: Nếu có stale cache, trả về dữ liệu cũ thay vì báo lỗi
+    if (staleCache) {
+      console.warn("Returning stale cache as fallback due to error:", message);
+      return NextResponse.json({
+        success: true,
+        data: staleCache.data,
+        cachedAt: staleCache.cachedAt,
+        fromCache: true,
+        stale: true,
+      });
+    }
+
     return NextResponse.json(
       { success: false, error: message },
       { status: 500 }
