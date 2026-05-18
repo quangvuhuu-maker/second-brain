@@ -43,8 +43,22 @@ export function MarketAnalysis() {
       const res = await fetch(url, {
         signal: AbortSignal.timeout(90000), // 90s timeout phía client
       });
-      const json = await res.json();
-      if (!json.success) throw new Error(json.error);
+
+      // Đọc response dạng text trước để tránh crash khi Vercel trả HTML/text
+      const rawText = await res.text();
+      let json: any;
+      try {
+        json = JSON.parse(rawText);
+      } catch {
+        // Vercel trả về "An error occurred..." (không phải JSON)
+        throw new Error(
+          res.status >= 500
+            ? "Server đang quá tải hoặc khởi động lại, vui lòng thử lại sau 1-2 phút."
+            : `Lỗi server (${res.status}): ${rawText.slice(0, 100)}`
+        );
+      }
+
+      if (!json.success) throw new Error(json.error || "Phân tích thất bại");
       setData(json.data);
       setCachedAt(json.cachedAt || null);
       setFromCache(json.fromCache || false);
