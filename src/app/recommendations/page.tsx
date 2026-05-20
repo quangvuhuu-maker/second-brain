@@ -50,14 +50,33 @@ export default function RecommendationsPage() {
     setError("");
     try {
       const url = refresh ? "/api/deep-recommendations?refresh=true" : "/api/deep-recommendations";
-      const res = await fetch(url);
-      const json = await res.json();
+      const res = await fetch(url, {
+        signal: AbortSignal.timeout(90000),
+      });
+      
+      const rawText = await res.text();
+      let json: any;
+      try {
+        json = JSON.parse(rawText);
+      } catch {
+        throw new Error(
+          res.status >= 500
+            ? "Server đang quá tải hoặc khởi động lại, vui lòng thử lại sau 1-2 phút."
+            : `Lỗi server (${res.status}): ${rawText.slice(0, 100)}`
+        );
+      }
+      
       if (!json.success) throw new Error(json.error);
       setData(json.data);
       setCachedAt(json.cachedAt || null);
       setFromCache(json.fromCache || false);
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Unknown error";
+      let message = "Unknown error";
+      if (err instanceof DOMException && err.name === "TimeoutError") {
+        message = "Kết nối quá lâu (timeout). Backend có thể đang khởi động, vui lòng thử lại sau 1-2 phút.";
+      } else if (err instanceof Error) {
+        message = err.message;
+      }
       setError(message);
     } finally {
       setLoading(false);
