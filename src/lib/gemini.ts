@@ -8,19 +8,20 @@ const genAI = new GoogleGenerativeAI(apiKey);
 
 // Use the standard high-quality model
 export const geminiModel = genAI.getGenerativeModel({
-  model: "gemini-flash-latest", // Revert về model mặc định vì 2.0 có limit = 0 trên free tier
+  model: "gemini-1.5-flash", // Tránh dùng latest để giảm thiểu 503
 });
 
 /**
- * Hàm hỗ trợ fallback (xoay vòng API key) khi gặp lỗi 429 Quota Exceeded.
+ * Hàm hỗ trợ fallback (xoay vòng API key) khi gặp lỗi 429 Quota Exceeded
+ * và tự động thử lại (Exponential Backoff) khi gặp lỗi 503 High Demand.
  * @param request Request truyền vào hàm generateContent
  * @param keys Mảng các API Keys lấy từ DB (hoặc ENV)
- * @param modelName Tên model (mặc định gemini-flash-latest)
+ * @param modelName Tên model (mặc định gemini-1.5-flash)
  */
 export async function generateContentWithFallback(
   request: string | GenerateContentRequest,
   keys: string[],
-  modelName: string = "gemini-flash-latest"
+  modelName: string = "gemini-1.5-flash"
 ) {
   // Đảm bảo luôn có ít nhất 1 key từ env nếu mảng truyền vào rỗng
   const apiKeysToTry = keys && keys.length > 0 ? keys : [process.env.GEMINI_API_KEY || ""];
@@ -45,7 +46,7 @@ export async function generateContentWithFallback(
         const msg = error.message?.toLowerCase() || "";
         
         // Nếu lỗi 503, 500, 502 thì retry với exponential backoff trên CÙNG 1 KEY
-        if (msg.includes("503") || msg.includes("500") || msg.includes("502") || msg.includes("504") || msg.includes("fetch failed")) {
+        if (msg.includes("503") || msg.includes("500") || msg.includes("502") || msg.includes("504") || msg.includes("fetch failed") || msg.includes("high demand")) {
           console.warn(`[Gemini] Server error (50x/Network). Retrying ${retries + 1}/${MAX_RETRIES} after delay... Error:`, error.message);
           if (retries < MAX_RETRIES) {
             await new Promise(resolve => setTimeout(resolve, BASE_DELAY * Math.pow(2, retries)));
