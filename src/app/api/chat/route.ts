@@ -40,7 +40,7 @@ export async function POST(req: Request) {
       contents: contents,
     };
 
-    const result = await generateContentWithFallback(requestContent, apiKeys, "gemini-flash-latest");
+    const result = await generateContentWithFallback(requestContent, apiKeys, "gemini-1.5-flash");
 
     const responseText = result.response.text();
 
