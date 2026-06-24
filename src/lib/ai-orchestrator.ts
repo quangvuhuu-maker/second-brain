@@ -20,7 +20,7 @@ export interface APIKeys {
 export async function generateAIContent(
   request: AIRequest,
   apiKeys: APIKeys,
-  geminiFallbackModel: string = "gemini-1.5-flash-latest"
+  geminiFallbackModel: string = "gemini-flash-latest"
 ) {
   // Lấy key cho DeepSeek (ưu tiên từ database, nếu không có thì lấy từ env)
   let deepseekKey = process.env.DEEPSEEK_API_KEY || "";

@@ -143,7 +143,7 @@ export async function GET(request: NextRequest) {
       }
     };
 
-    const result = await generateAIContent(requestContent, apiKeys, "gemini-1.5-flash-latest");
+    const result = await generateAIContent(requestContent, apiKeys, "gemini-flash-latest");
     const responseText = result.response.text();
     const evaluation = safeParseJSON(responseText);
 
