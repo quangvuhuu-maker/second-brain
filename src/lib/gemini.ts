@@ -8,7 +8,7 @@ const genAI = new GoogleGenerativeAI(apiKey);
 
 // Use the standard high-quality model
 export const geminiModel = genAI.getGenerativeModel({
-  model: "gemini-1.5-flash", // Tránh dùng latest để giảm thiểu 503
+  model: "gemini-1.5-flash-latest",
 });
 
 /**
@@ -21,7 +21,7 @@ export const geminiModel = genAI.getGenerativeModel({
 export async function generateContentWithFallback(
   request: string | GenerateContentRequest,
   keys: string[],
-  modelName: string = "gemini-1.5-flash"
+  modelName: string = "gemini-1.5-flash-latest"
 ) {
   // Đảm bảo luôn có ít nhất 1 key từ env nếu mảng truyền vào rỗng
   const apiKeysToTry = keys && keys.length > 0 ? keys : [process.env.GEMINI_API_KEY || ""];

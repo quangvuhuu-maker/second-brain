@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { generateContentWithFallback } from "@/lib/gemini";
+import { generateAIContent, APIKeys } from "@/lib/ai-orchestrator";
 import { fetchStockData, fetchMacroNews, fetchSingleStock } from "@/lib/market-data";
 import { adminDb } from "@/lib/firebase-admin";
 import { safeParseJSON } from "@/lib/safe-parse-json";
@@ -80,11 +80,14 @@ export async function GET(request: NextRequest) {
     const newsText = news.slice(0, 5).map((n: any) => `- ${n.title}: ${n.summary}`).join("\n");
 
     // Fetch API keys song song với việc chuẩn bị prompt
-    let apiKeys: string[] = [];
+    let apiKeys: APIKeys = {};
     try {
       const settingsDoc = await adminDb.collection("settings").doc("api_keys").get();
       if (settingsDoc.exists) {
-        apiKeys = settingsDoc.data()?.geminiKeys || [];
+        apiKeys = {
+          geminiKeys: settingsDoc.data()?.geminiKeys || [],
+          deepseekKeys: settingsDoc.data()?.deepseekKeys || [],
+        };
       }
     } catch (e) {
       console.warn("Failed to fetch API keys from settings", e);
@@ -140,7 +143,7 @@ export async function GET(request: NextRequest) {
       }
     };
 
-    const result = await generateContentWithFallback(requestContent, apiKeys, "gemini-1.5-flash");
+    const result = await generateAIContent(requestContent, apiKeys, "gemini-1.5-flash-latest");
     const responseText = result.response.text();
     const evaluation = safeParseJSON(responseText);
 

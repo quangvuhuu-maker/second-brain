@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { geminiModel, generateContentWithFallback } from "@/lib/gemini";
+import { generateAIContent, APIKeys } from "@/lib/ai-orchestrator";
+import { geminiModel } from "@/lib/gemini";
 import { fetchStockData, fetchMacroNews } from "@/lib/market-data";
 import { adminDb } from "@/lib/firebase-admin";
 import { safeParseJSON } from "@/lib/safe-parse-json";
@@ -126,11 +127,14 @@ export async function GET(request: NextRequest) {
     `;
 
     // Fetch API keys from settings
-    let apiKeys: string[] = [];
+    let apiKeys: APIKeys = {};
     try {
       const settingsDoc = await adminDb.collection("settings").doc("api_keys").get();
       if (settingsDoc.exists) {
-        apiKeys = settingsDoc.data()?.geminiKeys || [];
+        apiKeys = {
+          geminiKeys: settingsDoc.data()?.geminiKeys || [],
+          deepseekKeys: settingsDoc.data()?.deepseekKeys || [],
+        };
       }
     } catch (e) {
       console.warn("Failed to fetch API keys from settings", e);
@@ -143,7 +147,7 @@ export async function GET(request: NextRequest) {
       }
     };
 
-    const result = await generateContentWithFallback(requestContent, apiKeys, "gemini-1.5-flash");
+    const result = await generateAIContent(requestContent, apiKeys, "gemini-1.5-flash-latest");
 
     const responseText = result.response.text();
     const analysis = safeParseJSON(responseText);
