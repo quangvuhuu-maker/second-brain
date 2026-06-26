@@ -285,12 +285,19 @@ QUY TẮC DCA vs SCALE IN (BẮT BUỘC ĐÚNG THỨ TỰ):
 - scaleInPoint: Giá CAO HƠN entryPrice (mua thêm khi giá breakout xác nhận xu hướng)
 - KHÔNG được để scaleIn < entry hoặc dca > entry
 
+QUY TẮC fundamentalReason (BẮT BUỘC KHÔNG được để "N/A"):
+- Dùng kiến thức của bạn về công ty niêm yết trên HOSE/HNX: ngành nghề, vị thế cạnh tranh, tình hình kinh doanh gần đây.
+- Kết hợp với tin vĩ mô đã cung cấp để đánh giá tác động lên công ty cụ thể.
+- Ví dụ: "VCB: Ngân hàng nhà nước lớn nhất, hưởng lợi từ chính sách nới lỏng tiền tệ, NIM ổn định, nợ xấu kiểm soát tốt."
+- Nếu không có thông tin cụ thể, hãy nêu rủi ro/cơ hội ngành theo tin vĩ mô. TUYỆT ĐỐI không trả về "N/A".
+
 Quy tắc BẮT BUỘC:
 1. Chọn ĐÚNG 10 mã Mua và 10 mã Bán từ danh sách trên.
 2. entryPrice PHẢI nhỏ hơn currentPrice (entry an toàn, không chase giá).
 3. dcaPoint < entryPrice < scaleInPoint (thứ tự giá bắt buộc).
 4. Tuyệt đối KHÔNG đưa mã có Trend giảm + LL mới vào topBuys.
-5. Tất cả giá là NUMBER. Chỉ trả về JSON thuần, không text thêm.`;
+5. fundamentalReason PHẢI có nội dung thực tế, KHÔNG được "N/A".
+6. Tất cả giá là NUMBER. Chỉ trả về JSON thuần, không text thêm.`;
 
       // --- Fetch API keys từ Firestore ---
       let apiKeys: APIKeys = {};
