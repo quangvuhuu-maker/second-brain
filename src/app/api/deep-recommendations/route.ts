@@ -36,13 +36,40 @@ function getVNDateString(): string {
 }
 
 /**
- * Pre-filter danh sách cổ phiếu xuống còn top 60 mã tốt nhất trước khi gửi vào prompt.
- * Tiêu chí lọc: ưu tiên có tín hiệu SMC/VSA rõ ràng, RSI hợp lý, OBV tích cực.
- * Mục đích: giảm kích thước prompt ~60%, giúp AI phân tích chính xác hơn và tránh timeout.
+ * Lọc danh sách ứng viên MUA: chỉ giữ mã có tín hiệu bullish rõ ràng.
+ * Đây là hard filter bằng code — AI không thể override.
+ * Mã KHÔNG hợp lệ để MUA:
+ *   - Trend downtrend (rõ ràng)
+ *   - SMC = Bearish CHoCH / Lower Low / Bearish FVG
+ *   - OBV Down + Trend không phải uptrend
  */
-function preFilterStocks(stocks: any[], topN: number = 60): any[] {
-  // Scoring: mỗi tín hiệu tích cực +1 điểm
-  const scored = stocks.map((s) => {
+function getBuyPool(stocks: any[], topN: number = 40): any[] {
+  const candidates = stocks.filter((s) => {
+    const trend = (s.trend || "").toLowerCase();
+    const smc = (s.smcSignal || "").toLowerCase();
+    const obv = (s.obvTrend || "").toLowerCase();
+    const rsi = parseFloat(s.rsi) || 50;
+
+    // Loại trừ cứng: downtrend rõ ràng
+    if (trend.includes("down")) return false;
+
+    // Loại trừ cứng: SMC bearish signals (lower low, bearish choch, bearish fvg)
+    if (smc.includes("lower low") || smc.includes("ll")) return false;
+    if (smc.includes("bearish choch") || smc.includes("bearish cho")) return false;
+    if (smc.includes("bearish fvg") && obv.includes("down")) return false;
+
+    // Loại trừ: OBV Down + không có tín hiệu bullish nào
+    const hasBullish = smc.includes("bullish") || smc.includes("bos") || (s.vsaSignal || "").toLowerCase().includes("sos");
+    if (obv.includes("down") && !hasBullish) return false;
+
+    // RSI quá cao (overbought) không nên mua đuổi
+    if (rsi > 72) return false;
+
+    return true;
+  });
+
+  // Score và lấy top N
+  const scored = candidates.map((s) => {
     let score = 0;
     const smc = (s.smcSignal || "").toLowerCase();
     const vsa = (s.vsaSignal || "").toLowerCase();
@@ -50,32 +77,67 @@ function preFilterStocks(stocks: any[], topN: number = 60): any[] {
     const rsi = parseFloat(s.rsi) || 50;
     const macd = (s.macd || "").toLowerCase();
 
-    // Tín hiệu mua mạnh
     if (smc.includes("bullish") || smc.includes("bos") || smc.includes("choch")) score += 3;
     if (vsa.includes("sos") || vsa.includes("sign of strength")) score += 3;
     if (obv.includes("up")) score += 2;
-    if (rsi >= 45 && rsi <= 70) score += 1; // RSI hợp lý
+    if (rsi >= 45 && rsi <= 65) score += 2;
     if (macd.includes("bullish") || macd.includes("up")) score += 1;
-
-    // Tín hiệu bán mạnh (cũng cần để chọn top sells)
-    if (vsa.includes("sow") || vsa.includes("sign of weakness")) score += 3;
-    if (smc.includes("bearish") || smc.includes("fvg")) score += 2;
-    if (obv.includes("down")) score += 1;
-    if (rsi > 70 || rsi < 30) score += 2; // RSI extreme
-
-    // Volume cao hơn bình thường cũng ưu tiên
-    const vol = parseFloat(s.volume) || 0;
-    if (vol > 500000) score += 1;
+    if ((parseFloat(s.volume) || 0) > 500000) score += 1;
 
     return { ...s, _score: score };
   });
 
-  // Sắp xếp theo score giảm dần, lấy top N
   return scored
     .sort((a, b) => b._score - a._score)
     .slice(0, topN)
-    .map(({ _score, ...rest }) => rest); // bỏ trường _score trước khi đưa vào prompt
+    .map(({ _score, ...rest }) => rest);
 }
+
+/**
+ * Lọc danh sách ứng viên BÁN: chỉ giữ mã có tín hiệu bearish rõ ràng.
+ * Loại trừ mã đang trong uptrend mạnh với Bullish BOS/CHoCH.
+ */
+function getSellPool(stocks: any[], topN: number = 40): any[] {
+  const candidates = stocks.filter((s) => {
+    const trend = (s.trend || "").toLowerCase();
+    const smc = (s.smcSignal || "").toLowerCase();
+    const obv = (s.obvTrend || "").toLowerCase();
+    const rsi = parseFloat(s.rsi) || 50;
+
+    // Loại trừ: uptrend mạnh với xác nhận bullish
+    if (trend.includes("up") && smc.includes("bullish bos") && obv.includes("up")) return false;
+
+    // Loại trừ: RSI thấp (oversold) kết hợp OBV Up — đang tích lũy
+    if (rsi < 30 && obv.includes("up")) return false;
+
+    // Ưu tiên mã có tín hiệu bearish rõ
+    const hasBearish = smc.includes("bearish") || (s.vsaSignal || "").toLowerCase().includes("sow")
+      || trend.includes("down") || obv.includes("down") || rsi > 70;
+    return hasBearish;
+  });
+
+  const scored = candidates.map((s) => {
+    let score = 0;
+    const smc = (s.smcSignal || "").toLowerCase();
+    const vsa = (s.vsaSignal || "").toLowerCase();
+    const obv = (s.obvTrend || "").toLowerCase();
+    const rsi = parseFloat(s.rsi) || 50;
+
+    if (vsa.includes("sow") || vsa.includes("sign of weakness")) score += 3;
+    if (smc.includes("bearish") || smc.includes("lower low")) score += 3;
+    if (obv.includes("down")) score += 2;
+    if (rsi > 70) score += 2;
+    if (rsi > 75) score += 1;
+
+    return { ...s, _score: score };
+  });
+
+  return scored
+    .sort((a, b) => b._score - a._score)
+    .slice(0, topN)
+    .map(({ _score, ...rest }) => rest);
+}
+
 
 export async function GET(request: NextRequest) {
   try {
@@ -155,26 +217,37 @@ export async function GET(request: NextRequest) {
       const stocksMap = new Map();
       stocks.forEach((s: any) => stocksMap.set(s.symbol, s.price));
 
-      // --- Pre-filter: chỉ giữ top 60 mã có tín hiệu rõ nhất ---
-      const filteredStocks = preFilterStocks(stocks, 60);
-      console.log(`[DeepRec] Pre-filter: ${stocks.length} → ${filteredStocks.length} mã`);
+      // --- Hard filter bằng code: tách riêng buy pool và sell pool ---
+      const buyPool = getBuyPool(stocks, 40);
+      const sellPool = getSellPool(stocks, 40);
+      console.log(`[DeepRec] buyPool: ${buyPool.length} mã | sellPool: ${sellPool.length} mã (từ ${stocks.length} mã tổng)`);
 
-      // Format compact: bỏ số thập phân thừa
-      const stocksText = filteredStocks
+      // Format compact
+      const formatStocks = (list: any[]) => list
         .map((s: any) =>
           `${s.symbol}|${s.price}|${s.volume}|${s.trend}|${s.rsi}|${s.macd}|${s.obvTrend}|${s.bbWidth}|${s.support}|${s.resistance}|${s.smcSignal}|${s.vsaSignal}`
         )
         .join("\n");
 
+      const buyText = formatStocks(buyPool);
+      const sellText = formatStocks(sellPool);
+
       const newsText = news
-        .slice(0, 10) // Chỉ lấy 10 tin mới nhất
+        .slice(0, 10)
         .map((n: any) => `- ${n.title}: ${n.summary}`)
         .join("\n");
 
-      const prompt = `Bạn là CIO của quỹ đầu tư hàng đầu Việt Nam. Phân tích ${filteredStocks.length} cổ phiếu được chọn lọc (từ rổ 150 mã thanh khoản cao) và tin vĩ mô để chọn Top 10 MUA và Top 10 BÁN.
+      const prompt = `Bạn là CIO của quỹ đầu tư hàng đầu Việt Nam. Chọn Top 10 MUA từ danh sách BUY POOL và Top 10 BÁN từ danh sách SELL POOL dưới đây.
 
-DỮ LIỆU CỔ PHIẾU [Symbol|Price|Vol|Trend|RSI|MACD|OBV|BB|Support|Resistance|SMC|VSA]:
-${stocksText}
+⚠️ QUAN TRỌNG: Danh sách đã được lọc kỹ bằng code. CHỈ chọn từ đúng pool tương ứng.
+
+BUY POOL — ${buyPool.length} mã ĐÃ QUA BỘ LỌC (Trend không giảm, SMC không có LL/Bearish CHoCH, OBV hợp lệ):
+[Symbol|Price|Vol|Trend|RSI|MACD|OBV|BB|Support|Resistance|SMC|VSA]
+${buyText}
+
+SELL POOL — ${sellPool.length} mã có tín hiệu bearish:
+[Symbol|Price|Vol|Trend|RSI|MACD|OBV|BB|Support|Resistance|SMC|VSA]
+${sellText}
 
 TIN VĨ MÔ (10 tin mới nhất):
 ${newsText}
