@@ -205,7 +205,7 @@ Quy tắc BẮT BUỘC:
         },
       };
 
-      const result = await generateAIContent(requestContent, apiKeys, "gemini-1.5-flash");
+      const result = await generateAIContent(requestContent, apiKeys, "gemini-2.5-flash");
       const responseText = result.response.text();
       analysis = safeParseJSON(responseText);
 
