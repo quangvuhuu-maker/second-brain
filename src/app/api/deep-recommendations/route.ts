@@ -176,13 +176,22 @@ ${newsText}
 TIÊU CHÍ MUA: VSA=SOS hoặc SMC=Bullish BOS/CHoCH, OBV tăng, RSI 45-65, gần vùng Support.
 TIÊU CHÍ BÁN: VSA=SOW hoặc SMC=Bearish FVG, OBV giảm, RSI>70 hoặc thủng Support.
 
+QUY TẮC ENTRY & TARGET (BẮT BUỘC TUÂN THỦ):
+- entryPrice: Điểm vào lệnh AN TOÀN = vùng Support hoặc pullback về MA. PHẢI thấp hơn giá hiện tại 2-5%. KHÔNG phép bằng hoặc cao hơn giá hiện tại.
+- stopLoss (số): Thấp hơn Support mạnh 2-3%. Đây là mức cắt lỗ cứng tuyệt đối.
+- targetShort (ngắn hạn 1-4 tuần): Kháng cự gần nhất. upsideShort tối thiểu 8%.
+- targetMedium (trung hạn 1-3 tháng): Kháng cự trung hạn. upsideMedium tối thiểu 15%.
+- targetLong (dài hạn 3-6 tháng): Mục tiêu toàn sóng / Fair Value. upsideLong tối thiểu 25%.
+- Tất cả upside = TÍNH CHÍNH XÁC: ((target - entryPrice) / entryPrice * 100), làm tròn 1 chữ số thập phân.
+- Tương tự cho topSells: sellPrice = điểm bán an toàn, downside tính từ sellPrice.
+
 Trả về JSON hợp lệ (không có markdown):
-{"topBuys":[{"symbol":"","currentPrice":0,"entryPrice":0,"entryPointDesc":"","dcaPoint":"","scaleInPoint":"","stopLossPoint":"","targetPrice":0,"upsidePercent":0,"technicalReason":"","fundamentalReason":""}],"topSells":[{"symbol":"","currentPrice":0,"sellPrice":0,"targetPrice":0,"downsidePercent":0,"technicalReason":"","fundamentalReason":""}]}
+{"topBuys":[{"symbol":"","currentPrice":0,"entryPrice":0,"entryPointDesc":"","stopLoss":0,"stopLossPoint":"","dcaPoint":"","scaleInPoint":"","targetShort":0,"upsideShort":0,"targetMedium":0,"upsideMedium":0,"targetLong":0,"upsideLong":0,"technicalReason":"","fundamentalReason":""}],"topSells":[{"symbol":"","currentPrice":0,"sellPrice":0,"stopLoss":0,"targetShort":0,"downsideShort":0,"targetMedium":0,"downsideMedium":0,"targetLong":0,"downsideLong":0,"technicalReason":"","fundamentalReason":""}]}
 
 Quy tắc BẮT BUỘC:
 1. Chọn ĐÚNG 10 mã Mua và 10 mã Bán từ danh sách trên.
-2. entryPrice và sellPrice là số (NUMBER), sát với Price trong dữ liệu (lệch tối đa 1%).
-3. Chỉ trả về JSON, không có text thêm.`;
+2. entryPrice PHẢI nhỏ hơn currentPrice (entry an toàn, không chase giá).
+3. Tất cả giá là NUMBER. Chỉ trả về JSON thuần, không text thêm.`;
 
       // --- Fetch API keys từ Firestore ---
       let apiKeys: APIKeys = {};
