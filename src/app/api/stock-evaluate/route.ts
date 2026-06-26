@@ -140,10 +140,11 @@ export async function GET(request: NextRequest) {
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       generationConfig: {
         responseMimeType: "application/json",
+        thinkingConfig: { thinkingBudget: 0 }, // Tắt thinking để đảm bảo xong trong 60s Vercel
       }
     };
 
-    const result = await generateAIContent(requestContent, apiKeys, "gemini-flash-latest");
+    const result = await generateAIContent(requestContent, apiKeys, "gemini-2.5-flash");
     const responseText = result.response.text();
     const evaluation = safeParseJSON(responseText);
 

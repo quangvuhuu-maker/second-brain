@@ -137,10 +137,11 @@ export async function GET(request: NextRequest) {
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       generationConfig: {
         responseMimeType: "application/json",
+        thinkingConfig: { thinkingBudget: 0 },
       }
     };
 
-    const result = await generateAIContent(requestContent, apiKeys, "gemini-flash-latest");
+    const result = await generateAIContent(requestContent, apiKeys, "gemini-2.5-flash");
 
     const responseText = result.response.text();
     const analysis = safeParseJSON(responseText);

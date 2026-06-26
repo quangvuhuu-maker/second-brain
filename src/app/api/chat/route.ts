@@ -44,7 +44,7 @@ export async function POST(req: Request) {
       contents: contents,
     };
 
-    const result = await generateAIContent(requestContent, apiKeys, "gemini-flash-latest");
+    const result = await generateAIContent(requestContent, apiKeys, "gemini-2.5-flash");
 
     const responseText = result.response.text();
 
