@@ -202,6 +202,9 @@ Quy tắc BẮT BUỘC:
         contents: [{ role: "user", parts: [{ text: prompt }] }],
         generationConfig: {
           responseMimeType: "application/json",
+          // Tắt thinking mode — gemini-2.5-flash thinking có thể mất 30-60s thêm
+          // Với phân tích cổ phiếu, tốc độ quan trọng hơn (phải xong trong 60s Vercel)
+          thinkingConfig: { thinkingBudget: 0 },
         },
       };
 

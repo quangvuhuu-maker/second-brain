@@ -34,9 +34,9 @@ export async function fetchStockData(refresh: boolean = false): Promise<StockDat
     next: { revalidate: 60 }, // Cache trong 60 giây
     signal: AbortSignal.timeout(60000) // Tăng timeout lên 60s cho Render cold start
   });
-  
+
   if (!res.ok) throw new Error(`Lỗi kết nối Backend Python (Stocks). HTTP ${res.status}`);
-  
+
   const rawText = await res.text();
   let data;
   try {
@@ -44,7 +44,7 @@ export async function fetchStockData(refresh: boolean = false): Promise<StockDat
   } catch (err) {
     throw new Error(`Lỗi dữ liệu từ backend (Stocks): ${rawText.slice(0, 100)}`);
   }
-  
+
   if (!Array.isArray(data) || data.length === 0) {
     throw new Error("Backend trả về dữ liệu rỗng. Vui lòng thử lại sau.");
   }
@@ -60,9 +60,9 @@ export async function fetchMacroNews(): Promise<MacroNews[]> {
     next: { revalidate: 60 },
     signal: AbortSignal.timeout(60000)
   });
-  
+
   if (!res.ok) throw new Error(`Lỗi kết nối Backend Python (News). HTTP ${res.status}`);
-  
+
   const rawText = await res.text();
   try {
     return JSON.parse(rawText);
@@ -79,9 +79,9 @@ export async function fetchSingleStock(symbol: string): Promise<StockData> {
   const res = await fetch(`${API_URL}/api/market/stock/${symbol.toUpperCase()}`, {
     signal: AbortSignal.timeout(60000)
   });
-  
+
   if (!res.ok) throw new Error(`Lỗi kết nối Backend khi lấy dữ liệu mã ${symbol}. HTTP ${res.status}`);
-  
+
   const rawText = await res.text();
   let data;
   try {
@@ -89,7 +89,7 @@ export async function fetchSingleStock(symbol: string): Promise<StockData> {
   } catch (err) {
     throw new Error(`Lỗi dữ liệu mã ${symbol}: ${rawText.slice(0, 100)}`);
   }
-  
+
   if (data.error) throw new Error(data.error);
   return data;
 }
