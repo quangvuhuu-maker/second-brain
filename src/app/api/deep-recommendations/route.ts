@@ -90,13 +90,19 @@ export async function GET(request: NextRequest) {
         const cachedAt = cached?.cachedAt?.toDate?.()?.toISOString() || cached?.cachedAt;
 
         if (!forceRefresh && isCacheValid(cachedAt)) {
-          console.log("[DeepRec] Trả về cache hợp lệ (< 2h)");
-          return NextResponse.json({
-            success: true,
-            data: cached?.data,
-            cachedAt,
-            fromCache: true,
-          });
+          // Kiểm tra schema version: nếu cache cũ (không có targetShort) thì invalidate
+          const firstBuy = cached?.data?.topBuys?.[0];
+          const isNewSchema = firstBuy?.targetShort !== undefined;
+          if (isNewSchema) {
+            console.log("[DeepRec] Trả về cache hợp lệ (< 2h, schema v2)");
+            return NextResponse.json({
+              success: true,
+              data: cached?.data,
+              cachedAt,
+              fromCache: true,
+            });
+          }
+          console.log("[DeepRec] Cache cũ (schema v1, thiếu targetShort) → bỏ qua cache, chạy lại AI");
         }
       }
     } catch (cacheErr) {
@@ -186,7 +192,9 @@ QUY TẮC ENTRY & TARGET (BẮT BUỘC TUÂN THỦ):
 - Tương tự cho topSells: sellPrice = điểm bán an toàn, downside tính từ sellPrice.
 
 Trả về JSON hợp lệ (không có markdown):
-{"topBuys":[{"symbol":"","currentPrice":0,"entryPrice":0,"entryPointDesc":"","stopLoss":0,"stopLossPoint":"","dcaPoint":"","scaleInPoint":"","targetShort":0,"upsideShort":0,"targetMedium":0,"upsideMedium":0,"targetLong":0,"upsideLong":0,"technicalReason":"","fundamentalReason":""}],"topSells":[{"symbol":"","currentPrice":0,"sellPrice":0,"stopLoss":0,"targetShort":0,"downsideShort":0,"targetMedium":0,"downsideMedium":0,"targetLong":0,"downsideLong":0,"technicalReason":"","fundamentalReason":""}]}
+{"topBuys":[{"symbol":"","currentPrice":0,"entryPrice":0,"entryPointDesc":"","stopLoss":0,"stopLossPoint":"","dcaPoint":"","scaleInPoint":"","targetShort":0,"upsideShort":0,"targetMedium":0,"upsideMedium":0,"targetLong":0,"upsideLong":0,"targetPrice":0,"upsidePercent":0,"technicalReason":"","fundamentalReason":""}],"topSells":[{"symbol":"","currentPrice":0,"sellPrice":0,"stopLoss":0,"targetShort":0,"downsideShort":0,"targetMedium":0,"downsideMedium":0,"targetLong":0,"downsideLong":0,"targetPrice":0,"downsidePercent":0,"technicalReason":"","fundamentalReason":""}]}
+
+Ghi chú: targetPrice = targetMedium (alias), upsidePercent = upsideMedium (alias). Điền cùng giá trị.
 
 Quy tắc BẮT BUỘC:
 1. Chọn ĐÚNG 10 mã Mua và 10 mã Bán từ danh sách trên.
