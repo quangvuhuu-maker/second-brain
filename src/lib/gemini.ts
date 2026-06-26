@@ -8,7 +8,7 @@ const genAI = new GoogleGenerativeAI(apiKey);
 
 // Use the standard high-quality model
 export const geminiModel = genAI.getGenerativeModel({
-  model: "gemini-2.0-flash",
+  model: "gemini-1.5-flash",
 });
 
 /**
@@ -40,7 +40,7 @@ export function getEnvGeminiKeys(): string[] {
 export async function generateContentWithFallback(
   request: string | GenerateContentRequest,
   keys: string[],
-  modelName: string = "gemini-2.0-flash"
+  modelName: string = "gemini-1.5-flash"
 ) {
   // Ưu tiên keys từ DB, nếu rỗng thì lấy từ env pool
   const apiKeysToTry = keys && keys.length > 0 ? keys : getEnvGeminiKeys();
