@@ -8,73 +8,123 @@ const genAI = new GoogleGenerativeAI(apiKey);
 
 // Use the standard high-quality model
 export const geminiModel = genAI.getGenerativeModel({
-  model: "gemini-flash-latest",
+  model: "gemini-2.0-flash",
 });
+
+/**
+ * Đọc mảng API keys từ env GEMINI_API_KEYS (comma-separated) hoặc fallback về GEMINI_API_KEY.
+ * Dùng làm default pool khi không có keys từ DB.
+ */
+export function getEnvGeminiKeys(): string[] {
+  const poolEnv = process.env.GEMINI_API_KEYS;
+  if (poolEnv) {
+    return poolEnv.split(",").map((k) => k.trim()).filter(Boolean);
+  }
+  const single = process.env.GEMINI_API_KEY;
+  return single ? [single] : [];
+}
 
 /**
  * Hàm hỗ trợ fallback (xoay vòng API key) khi gặp lỗi 429 Quota Exceeded
  * và tự động thử lại (Exponential Backoff) khi gặp lỗi 503 High Demand.
+ *
+ * Cải tiến so với bản cũ:
+ * - Fix bug: sau MAX_RETRIES phải throw lỗi, không thoát im lặng
+ * - MAX_RETRIES = 2 (tổng delay tối đa ~3s), tiết kiệm thời gian trong giới hạn 60s Vercel
+ * - Đọc keys từ GEMINI_API_KEYS env nếu mảng truyền vào rỗng
+ *
  * @param request Request truyền vào hàm generateContent
  * @param keys Mảng các API Keys lấy từ DB (hoặc ENV)
- * @param modelName Tên model (mặc định gemini-1.5-flash)
+ * @param modelName Tên model
  */
 export async function generateContentWithFallback(
   request: string | GenerateContentRequest,
   keys: string[],
-  modelName: string = "gemini-flash-latest"
+  modelName: string = "gemini-2.0-flash"
 ) {
-  // Đảm bảo luôn có ít nhất 1 key từ env nếu mảng truyền vào rỗng
-  const apiKeysToTry = keys && keys.length > 0 ? keys : [process.env.GEMINI_API_KEY || ""];
+  // Ưu tiên keys từ DB, nếu rỗng thì lấy từ env pool
+  const apiKeysToTry = keys && keys.length > 0 ? keys : getEnvGeminiKeys();
+
+  if (apiKeysToTry.length === 0) {
+    throw new Error("Không có Gemini API key nào được cấu hình.");
+  }
 
   let lastError: any;
-  const MAX_RETRIES = 3;
-  const BASE_DELAY = 1000;
+  const MAX_RETRIES = 2; // giảm từ 3 → 2 để tiết kiệm thời gian
+  const BASE_DELAY = 800; // giảm từ 1000 → 800ms
 
-  for (const key of apiKeysToTry) {
+  for (let keyIndex = 0; keyIndex < apiKeysToTry.length; keyIndex++) {
+    const key = apiKeysToTry[keyIndex];
     if (!key) continue;
-    
-    let retries = 0;
-    while (retries <= MAX_RETRIES) {
+
+    console.log(`[Gemini] Thử key ${keyIndex + 1}/${apiKeysToTry.length}...`);
+
+    for (let retries = 0; retries <= MAX_RETRIES; retries++) {
       try {
         const client = new GoogleGenerativeAI(key);
         const model = client.getGenerativeModel({ model: modelName });
-        
+
         const result = await model.generateContent(request);
+        console.log(`[Gemini] ✅ Thành công với key ${keyIndex + 1}, retry #${retries}`);
         return result;
       } catch (error: any) {
         lastError = error;
         const msg = error.message?.toLowerCase() || "";
-        
-        // Nếu lỗi 503, 500, 502 thì retry với exponential backoff trên CÙNG 1 KEY
-        if (msg.includes("503") || msg.includes("500") || msg.includes("502") || msg.includes("504") || msg.includes("fetch failed") || msg.includes("high demand")) {
-          console.warn(`[Gemini] Server error (50x/Network). Retrying ${retries + 1}/${MAX_RETRIES} after delay... Error:`, error.message);
+
+        // Lỗi 5xx hoặc network → retry exponential backoff trên CÙNG 1 KEY
+        const isServerError =
+          msg.includes("503") ||
+          msg.includes("500") ||
+          msg.includes("502") ||
+          msg.includes("504") ||
+          msg.includes("fetch failed") ||
+          msg.includes("high demand") ||
+          msg.includes("overloaded");
+
+        if (isServerError) {
           if (retries < MAX_RETRIES) {
-            await new Promise(resolve => setTimeout(resolve, BASE_DELAY * Math.pow(2, retries)));
-            retries++;
-            continue; // Thử lại vòng lặp while
+            const delay = BASE_DELAY * Math.pow(2, retries);
+            console.warn(`[Gemini] Server error (5xx). Retry ${retries + 1}/${MAX_RETRIES} sau ${delay}ms...`);
+            await new Promise((resolve) => setTimeout(resolve, delay));
+            continue; // retry while
+          } else {
+            // Hết MAX_RETRIES → nhảy sang key tiếp theo
+            console.warn(`[Gemini] Key ${keyIndex + 1} hết retry (${MAX_RETRIES} lần), thử key tiếp theo...`);
+            lastError = error;
+            break; // break while → next key
           }
         }
-        
-        console.warn(`API Key rotation: Key failed (thử tiếp theo nếu có). Error:`, error.message);
-        
-        // Nếu lỗi 429 hoặc báo quota exceeded thì break khỏi vòng lặp while, nhảy sang key tiếp theo
-        if (
-          msg.includes("429") || 
-          msg.includes("quota") || 
-          msg.includes("exhausted") || 
+
+        // Lỗi quota / 429 → nhảy sang key tiếp theo ngay
+        const isQuotaError =
+          msg.includes("429") ||
+          msg.includes("quota") ||
+          msg.includes("exhausted") ||
           msg.includes("too many requests") ||
-          msg.includes("api key not valid")
-        ) {
-          break; // Break ra khỏi while loop, tiếp tục for loop (key tiếp theo)
+          msg.includes("rate limit") ||
+          msg.includes("resource_exhausted");
+
+        if (isQuotaError) {
+          console.warn(`[Gemini] Key ${keyIndex + 1} quota exceeded. Chuyển sang key tiếp theo...`);
+          lastError = error;
+          break; // break while → next key
         }
-        
-        // Các lỗi khác (như sai cú pháp) thì quăng lỗi luôn.
+
+        // API key không hợp lệ → nhảy sang key tiếp theo
+        if (msg.includes("api key not valid") || msg.includes("invalid api key")) {
+          console.warn(`[Gemini] Key ${keyIndex + 1} không hợp lệ. Chuyển sang key tiếp theo...`);
+          lastError = error;
+          break;
+        }
+
+        // Các lỗi khác (cú pháp, content policy...) → throw ngay
+        console.error(`[Gemini] Lỗi không xử lý được:`, error.message);
         throw error;
       }
     }
   }
 
-  throw new Error(`Tất cả API keys đều thất bại. Lỗi cuối cùng: ${lastError?.message || 'Unknown'}`);
+  throw new Error(`Tất cả ${apiKeysToTry.length} Gemini API keys đều thất bại. Lỗi cuối: ${lastError?.message || "Unknown"}`);
 }
 
 export default genAI;

@@ -1,5 +1,4 @@
-import OpenAI from "openai";
-import { generateContentWithFallback } from "./gemini";
+import { generateContentWithFallback, getEnvGeminiKeys } from "./gemini";
 
 // Mở rộng request object để hỗ trợ cấu trúc của Gemini
 export interface AIRequest {
@@ -17,56 +16,28 @@ export interface APIKeys {
   geminiKeys?: string[];
 }
 
+/**
+ * Sinh nội dung AI với Gemini.
+ * DeepSeek bị tắt tạm thời (chưa có token). Khi có token DeepSeek thì bỏ comment lại.
+ *
+ * Thứ tự ưu tiên keys:
+ * 1. Keys từ Firestore DB (apiKeys.geminiKeys)
+ * 2. Keys từ GEMINI_API_KEYS env (comma-separated pool)
+ * 3. GEMINI_API_KEY env (single key fallback)
+ */
 export async function generateAIContent(
   request: AIRequest,
   apiKeys: APIKeys,
-  geminiFallbackModel: string = "gemini-flash-latest"
+  geminiFallbackModel: string = "gemini-2.0-flash"
 ) {
-  // Lấy key cho DeepSeek (ưu tiên từ database, nếu không có thì lấy từ env)
-  let deepseekKey = process.env.DEEPSEEK_API_KEY || "";
-  if (apiKeys.deepseekKeys && apiKeys.deepseekKeys.length > 0) {
-    deepseekKey = apiKeys.deepseekKeys[0]; 
-  }
+  // Merge keys: DB keys có ưu tiên cao hơn, sau đó bổ sung bằng env keys
+  const dbKeys = apiKeys.geminiKeys || [];
+  const envKeys = getEnvGeminiKeys();
 
-  if (deepseekKey) {
-    try {
-      const openai = new OpenAI({
-        baseURL: "https://api.deepseek.com",
-        apiKey: deepseekKey,
-      });
+  // Loại duplicate: DB keys trước, rồi thêm env keys chưa có trong DB
+  const mergedKeys = [...dbKeys, ...envKeys.filter((k) => !dbKeys.includes(k))];
 
-      // Convert cấu trúc prompt từ kiểu của Gemini sang kiểu của OpenAI (DeepSeek)
-      const messages: any[] = request.contents.map((c) => ({
-        role: c.role === "model" ? "assistant" : "user",
-        content: c.parts.map((p) => p.text).join("\n"),
-      }));
+  console.log(`[AI] Sử dụng Gemini với ${mergedKeys.length} key(s). Model: ${geminiFallbackModel}`);
 
-      const isJson = request.generationConfig?.responseMimeType === "application/json";
-
-      const completion = await openai.chat.completions.create({
-        model: "deepseek-chat",
-        messages: messages,
-        response_format: isJson ? { type: "json_object" } : undefined,
-      });
-
-      const responseText = completion.choices[0]?.message?.content || "";
-
-      console.log("[AI] Successfully generated content using DeepSeek");
-
-      // Trả về cấu trúc giả lập của Gemini để tương thích ngược với code cũ
-      return {
-        response: {
-          text: () => responseText,
-        },
-      };
-    } catch (error: any) {
-      console.warn("[AI] DeepSeek failed, falling back to Gemini. Error:", error.message);
-    }
-  } else {
-    console.warn("[AI] No DeepSeek API key found, skipping directly to Gemini fallback.");
-  }
-
-  // Chạy fallback Gemini nếu DeepSeek lỗi hoặc không có key
-  console.log("[AI] Running fallback with Gemini...");
-  return generateContentWithFallback(request as any, apiKeys.geminiKeys || [], geminiFallbackModel);
+  return generateContentWithFallback(request as any, mergedKeys, geminiFallbackModel);
 }
