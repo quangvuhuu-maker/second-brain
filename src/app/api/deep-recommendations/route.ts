@@ -196,10 +196,28 @@ Trả về JSON hợp lệ (không có markdown):
 
 Ghi chú: targetPrice = targetMedium (alias), upsidePercent = upsideMedium (alias). Điền cùng giá trị.
 
+TIÊU CHÍ LOẠI TRỪ (TUYỆT ĐỐI KHÔNG được đưa vào topBuys):
+❌ Trend = "downtrend" hoặc "bearish" → KHÔNG MUA dù RSI oversold
+❌ SMC có tín hiệu "Lower Low" (LL) hoặc "Bearish CHoCH" gần nhất → KHÔNG MUA (cấu trúc giảm còn nguyên)
+❌ OBV đang giảm (down) kết hợp Trend giảm → KHÔNG MUA
+❌ Giá đang dưới cả MA20 lẫn Support chính → KHÔNG MUA
+✅ Chỉ MUA khi: Trend tăng/sideways AND (SMC=Bullish BOS/CHoCH hoặc VSA=SOS) AND OBV Up AND RSI 35-65
+
+TIÊU CHÍ LOẠI TRỪ topSells:
+❌ Trend = "uptrend" mạnh + SMC=Bullish BOS → KHÔNG BÁN
+✅ Chỉ BÁN khi: Trend giảm/đảo chiều AND (VSA=SOW hoặc SMC=Bearish) AND RSI>68 hoặc thủng Support
+
+QUY TẮC DCA vs SCALE IN (BẮT BUỘC ĐÚNG THỨ TỰ):
+- dcaPoint: Giá THẤP HƠN entryPrice (mua thêm nếu giá về sâu hơn vùng support)
+- scaleInPoint: Giá CAO HƠN entryPrice (mua thêm khi giá breakout xác nhận xu hướng)
+- KHÔNG được để scaleIn < entry hoặc dca > entry
+
 Quy tắc BẮT BUỘC:
 1. Chọn ĐÚNG 10 mã Mua và 10 mã Bán từ danh sách trên.
 2. entryPrice PHẢI nhỏ hơn currentPrice (entry an toàn, không chase giá).
-3. Tất cả giá là NUMBER. Chỉ trả về JSON thuần, không text thêm.`;
+3. dcaPoint < entryPrice < scaleInPoint (thứ tự giá bắt buộc).
+4. Tuyệt đối KHÔNG đưa mã có Trend giảm + LL mới vào topBuys.
+5. Tất cả giá là NUMBER. Chỉ trả về JSON thuần, không text thêm.`;
 
       // --- Fetch API keys từ Firestore ---
       let apiKeys: APIKeys = {};
