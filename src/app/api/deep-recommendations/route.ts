@@ -256,7 +256,11 @@ TIÊU CHÍ MUA: VSA=SOS hoặc SMC=Bullish BOS/CHoCH, OBV tăng, RSI 45-65, gầ
 TIÊU CHÍ BÁN: VSA=SOW hoặc SMC=Bearish FVG, OBV giảm, RSI>70 hoặc thủng Support.
 
 QUY TẮC ENTRY & TARGET (BẮT BUỘC TUÂN THỦ):
-- entryPrice: Điểm vào lệnh AN TOÀN = vùng Support hoặc pullback về MA. PHẢI thấp hơn giá hiện tại 2-5%. KHÔNG phép bằng hoặc cao hơn giá hiện tại.
+- entryPrice: Điểm vào lệnh AN TOÀN — chọn theo thứ tự ưu tiên sau:
+  1. **Ưu tiên 1 — Vùng Support kỹ thuật**: Dùng giá trị "support" trong data nếu support < currentPrice VÀ (currentPrice - support) / currentPrice ≤ 8%. Đây là vùng cầu thực sự, entry tại đây có ý nghĩa nhất.
+  2. **Ưu tiên 2 — Pullback về MA20**: Nếu support quá xa (>8%) hoặc support ≥ currentPrice → dùng movingAverage20 nếu MA20 < currentPrice.
+  3. **Fallback — Giảm 3%**: Nếu cả hai trường hợp trên không hợp lệ → entryPrice = currentPrice × 0.97.
+  ĐIỀU KIỆN BẮT BUỘC: entryPrice PHẢI < currentPrice. KHÔNG chase giá. entryPointDesc PHẢI ghi rõ lý do (VD: "Entry tại vùng Support 42,500 — cách giá 3.2%" hoặc "Pullback về MA20 tại 38,000").
 - stopLoss (số): Thấp hơn Support mạnh 2-3%. Đây là mức cắt lỗ cứng tuyệt đối.
 - targetShort (ngắn hạn 1-4 tuần): Kháng cự gần nhất. upsideShort tối thiểu 8%.
 - targetMedium (trung hạn 1-3 tháng): Kháng cự trung hạn. upsideMedium tối thiểu 15%.
