@@ -36,6 +36,60 @@ function getVNDateString(): string {
 }
 
 /**
+ * Hard sanitize: Đảm bảo entryPrice/sellPrice luôn < currentPrice.
+ * Nếu AI trả sai, tự động fix bằng fallback.
+ */
+function sanitizeAnalysis(analysis: any, stocksMap: Map<string, any>): any {
+  if (!analysis) return analysis;
+
+  const fixBuy = (s: any) => {
+    const stock = stocksMap.get(s.symbol);
+    const currentPrice = stock?.price ?? s.currentPrice;
+    const support = stock?.support;
+    const ma20 = stock?.movingAverage20;
+
+    let entryPrice = s.entryPrice;
+
+    // Nếu AI trả entryPrice >= currentPrice → tự động fix
+    if (!entryPrice || entryPrice >= currentPrice) {
+      if (support && support < currentPrice && (currentPrice - support) / currentPrice <= 0.08) {
+        entryPrice = support;
+        s.entryPointDesc = `[Auto-fix] Entry tại vùng Support ${support.toLocaleString("vi-VN")} — cách giá ${(((currentPrice - support) / currentPrice) * 100).toFixed(1)}%`;
+      } else if (ma20 && ma20 < currentPrice) {
+        entryPrice = ma20;
+        s.entryPointDesc = `[Auto-fix] Pullback về MA20 tại ${ma20.toLocaleString("vi-VN")}`;
+      } else {
+        entryPrice = Math.round(currentPrice * 0.97);
+        s.entryPointDesc = `[Auto-fix] Fallback -3% tại ${entryPrice.toLocaleString("vi-VN")}`;
+      }
+      console.warn(`[Sanitize] ${s.symbol}: entryPrice ${s.entryPrice} >= currentPrice ${currentPrice} → fixed to ${entryPrice}`);
+    }
+
+    return { ...s, entryPrice, currentPrice };
+  };
+
+  const fixSell = (s: any) => {
+    const stock = stocksMap.get(s.symbol);
+    const currentPrice = stock?.price ?? s.currentPrice;
+    let sellPrice = s.sellPrice;
+
+    // sellPrice nên <= currentPrice (bán ở giá hiện tại hoặc thấp hơn)
+    if (sellPrice && sellPrice > currentPrice * 1.02) {
+      sellPrice = currentPrice;
+      console.warn(`[Sanitize] ${s.symbol}: sellPrice ${s.sellPrice} > currentPrice ${currentPrice} → fixed to ${currentPrice}`);
+    }
+
+    return { ...s, sellPrice, currentPrice };
+  };
+
+  return {
+    ...analysis,
+    topBuys: (analysis.topBuys || []).map(fixBuy),
+    topSells: (analysis.topSells || []).map(fixSell),
+  };
+}
+
+/**
  * Lọc danh sách ứng viên MUA: chỉ giữ mã có tín hiệu bullish rõ ràng.
  * Đây là hard filter bằng code — AI không thể override.
  * Mã KHÔNG hợp lệ để MUA:
@@ -214,8 +268,9 @@ export async function GET(request: NextRequest) {
         fetchMacroNews(),
       ]);
 
-      const stocksMap = new Map();
-      stocks.forEach((s: any) => stocksMap.set(s.symbol, s.price));
+      // Map đầy đủ stock object (không chỉ price) để sanitize dùng support/MA20
+      const stocksMap = new Map<string, any>();
+      stocks.forEach((s: any) => stocksMap.set(s.symbol, s));
 
       // --- Hard filter bằng code: tách riêng buy pool và sell pool ---
       const buyPool = getBuyPool(stocks, 40);
@@ -331,6 +386,9 @@ Quy tắc BẮT BUỘC:
       const responseText = result.response.text();
       analysis = safeParseJSON(responseText);
 
+      // --- Hard sanitize: fix entryPrice/sellPrice sai ngay tại đây ---
+      analysis = sanitizeAnalysis(analysis, stocksMap);
+
       const now = new Date().toISOString();
       const vnDate = getVNDateString();
 
@@ -351,28 +409,28 @@ Quy tắc BẮT BUỘC:
           date: vnDate,
           createdAt: FieldValue.serverTimestamp(),
           topBuys: (analysisData.topBuys || []).map((s: Record<string, unknown>) => {
-            const actualPrice = stocksMap.get(s.symbol as string);
+            const stock = stocksMap.get(s.symbol as string);
             return {
               symbol: s.symbol,
-              entryPrice: actualPrice || s.entryPrice,
+              entryPrice: s.entryPrice,           // Đã được sanitize ở trên
               entryPointDesc: s.entryPointDesc,
               dcaPoint: s.dcaPoint,
               scaleInPoint: s.scaleInPoint,
               stopLossPoint: s.stopLossPoint,
               targetPrice: s.targetPrice,
-              currentPrice: actualPrice || s.currentPrice,
+              currentPrice: stock?.price || s.currentPrice,
               upsidePercent: s.upsidePercent,
               technicalReason: s.technicalReason,
               fundamentalReason: s.fundamentalReason,
             };
           }),
           topSells: (analysisData.topSells || []).map((s: Record<string, unknown>) => {
-            const actualPrice = stocksMap.get(s.symbol as string);
+            const stock = stocksMap.get(s.symbol as string);
             return {
               symbol: s.symbol,
-              sellPrice: actualPrice || s.sellPrice,
+              sellPrice: s.sellPrice,             // Đã được sanitize ở trên
               targetPrice: s.targetPrice,
-              currentPrice: actualPrice || s.currentPrice,
+              currentPrice: stock?.price || s.currentPrice,
               downsidePercent: s.downsidePercent,
             };
           }),
