@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { TrendingUp, TrendingDown, RefreshCw, Loader2, Target, BarChart2, BookOpen, Clock, ShieldAlert } from "lucide-react";
+import { TrendingUp, TrendingDown, RefreshCw, Loader2, Target, BarChart2, BookOpen, Clock, ShieldAlert, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
@@ -55,19 +55,54 @@ function fmt(n: number | undefined): string {
   return n.toLocaleString("vi-VN");
 }
 
-function UpsideBadge({ label, percent, target, color }: { label: string; percent?: number; target?: number; color: string }) {
+const SHORT_TERM_UPSIDE_THRESHOLD = 5; // % — dưới ngưỡng này coi là không hấp dẫn
+
+function UpsideBadge({
+  label,
+  percent,
+  target,
+  color,
+  currentPrice,
+  isShortTerm = false,
+}: {
+  label: string;
+  percent?: number;
+  target?: number;
+  color: string;
+  currentPrice?: number;
+  isShortTerm?: boolean;
+}) {
   if (!percent && !target) return null;
+
   const colorMap: Record<string, string> = {
     short: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
     medium: "bg-blue-500/10 text-blue-400 border-blue-500/20",
     long: "bg-purple-500/10 text-purple-400 border-purple-500/20",
   };
+
+  // Option C: tính upside thực tế từ giá hiện tại (không phải từ entry)
+  const actualUpside =
+    isShortTerm && currentPrice && target
+      ? ((target - currentPrice) / currentPrice) * 100
+      : null;
+  const isLowUpside = actualUpside !== null && actualUpside < SHORT_TERM_UPSIDE_THRESHOLD;
+
   return (
-    <div className={`rounded-lg border p-2 text-center ${colorMap[color]}`}>
+    <div className={`relative rounded-lg border p-2 text-center transition-opacity ${colorMap[color]} ${isLowUpside ? "opacity-50" : ""}`}>
       <div className="text-[10px] font-medium opacity-70 mb-0.5">{label}</div>
       <div className="font-bold text-sm">{target ? fmt(target) : "—"}</div>
       {percent !== undefined && percent > 0 && (
         <div className="text-[11px] font-semibold mt-0.5">+{percent.toFixed(1)}%</div>
+      )}
+      {/* Overlay cảnh báo khi upside thấp */}
+      {isLowUpside && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center rounded-lg bg-amber-500/15 border border-amber-500/40 backdrop-blur-[1px]">
+          <AlertTriangle className="h-3 w-3 text-amber-400 mb-0.5" />
+          <span className="text-[9px] font-bold text-amber-400 leading-tight text-center px-1">
+            Upside thấp
+            {actualUpside !== null ? ` (${actualUpside.toFixed(1)}%)` : ""}
+          </span>
+        </div>
       )}
     </div>
   );
@@ -255,6 +290,8 @@ export default function RecommendationsPage() {
                           percent={stock.upsideShort ?? stock.upsidePercent}
                           target={stock.targetShort ?? stock.targetPrice}
                           color="short"
+                          currentPrice={stock.currentPrice}
+                          isShortTerm
                         />
                         <UpsideBadge
                           label="Trung hạn (1-3m)"
