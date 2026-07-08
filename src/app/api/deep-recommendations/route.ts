@@ -317,10 +317,11 @@ QUY TẮC ENTRY & TARGET (BẮT BUỘC TUÂN THỦ):
   3. **Fallback — Giảm 3%**: Nếu cả hai trường hợp trên không hợp lệ → entryPrice = currentPrice × 0.97.
   ĐIỀU KIỆN BẮT BUỘC: entryPrice PHẢI < currentPrice. KHÔNG chase giá. entryPointDesc PHẢI ghi rõ lý do (VD: "Entry tại vùng Support 42,500 — cách giá 3.2%" hoặc "Pullback về MA20 tại 38,000").
 - stopLoss (số): Thấp hơn Support mạnh 2-3%. Đây là mức cắt lỗ cứng tuyệt đối.
-- targetShort (ngắn hạn 1-4 tuần): Kháng cự gần nhất. upsideShort tối thiểu 8%.
-- targetMedium (trung hạn 1-3 tháng): Kháng cự trung hạn. upsideMedium tối thiểu 15%.
-- targetLong (dài hạn 3-6 tháng): Mục tiêu toàn sóng / Fair Value. upsideLong tối thiểu 25%.
+- targetShort (ngắn hạn 1-4 tuần): Kháng cự gần nhất. HAI ĐIỀU KIỆN BẮT BUỘC ĐỒNG THỜI: (1) upsideShort = ((targetShort - entryPrice) / entryPrice * 100) ≥ 8%; (2) targetShort PHẢI > currentPrice × 1.05 (cách giá hiện tại ít nhất +5%). Nếu không tìm được kháng cự thỏa điều kiện → KHÔNG đưa mã này vào danh sách.
+- targetMedium (trung hạn 1-3 tháng): Kháng cự trung hạn. HAI ĐIỀU KIỆN BẮT BUỘC ĐỒNG THỜI: (1) upsideMedium = ((targetMedium - entryPrice) / entryPrice * 100) ≥ 15%; (2) targetMedium PHẢI > currentPrice × 1.10 (cách giá hiện tại ít nhất +10%).
+- targetLong (dài hạn 3-6 tháng): Mục tiêu toàn sóng / Fair Value. HAI ĐIỀU KIỆN BẮT BUỘC ĐỒNG THỜI: (1) upsideLong = ((targetLong - entryPrice) / entryPrice * 100) ≥ 25%; (2) targetLong PHẢI > currentPrice × 1.18 (cách giá hiện tại ít nhất +18%).
 - Tất cả upside = TÍNH CHÍNH XÁC: ((target - entryPrice) / entryPrice * 100), làm tròn 1 chữ số thập phân.
+- ⚠️ CẢNH BÁO: Nếu một mã KHÔNG có đủ dư địa tăng (target ngắn hạn < currentPrice × 1.05) → BỎ QUA mã đó, chọn mã khác trong pool có tiềm năng tăng thực sự.
 - Tương tự cho topSells: sellPrice = điểm bán an toàn, downside tính từ sellPrice.
 
 Trả về JSON hợp lệ (không có markdown):
@@ -356,7 +357,9 @@ Quy tắc BẮT BUỘC:
 3. dcaPoint < entryPrice < scaleInPoint (thứ tự giá bắt buộc).
 4. Tuyệt đối KHÔNG đưa mã có Trend giảm + LL mới vào topBuys.
 5. fundamentalReason PHẢI có nội dung thực tế, KHÔNG được "N/A".
-6. Tất cả giá là NUMBER. Chỉ trả về JSON thuần, không text thêm.`;
+6. Tất cả giá là NUMBER. Chỉ trả về JSON thuần, không text thêm.
+7. targetShort PHẢI > currentPrice × 1.05 (target ngắn hạn phải cách giá hiện tại ít nhất +5% để có giá trị giao dịch thực tiễn). Target quá gần giá hiện tại = vô nghĩa.
+8. Nếu một mã không có đủ dư địa tăng thỏa điều kiện → LOẠI mã đó, chọn mã có tiềm năng tốt hơn trong pool.`;
 
       // --- Fetch API keys từ Firestore ---
       let apiKeys: APIKeys = {};
