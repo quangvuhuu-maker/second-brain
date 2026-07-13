@@ -17,6 +17,8 @@ interface Recommendation {
   entryPointDesc?: string;
   dcaPoint?: string;
   scaleInPoint?: string;
+  proximityTier?: "A" | "B" | "C";
+  proximityPct?: number | null;
   // 3-tier targets for buys
   targetShort?: number;
   upsideShort?: number;
@@ -53,6 +55,46 @@ function formatCachedTime(isoStr: string): string {
 function fmt(n: number | undefined): string {
   if (!n) return "—";
   return n.toLocaleString("vi-VN");
+}
+
+/**
+ * Badge hiển thị tier proximity so với vùng support.
+ * Tier A (≤3%): mã đang ở tại/test support → có thể vào ngay
+ * Tier B (≤8%): gần support → chờ pullback
+ * Tier C (>8%): xa support → momentum entry
+ */
+function ProximityBadge({
+  tier,
+  pct,
+}: {
+  tier?: "A" | "B" | "C";
+  pct?: number | null;
+}) {
+  if (!tier) return null;
+
+  if (tier === "A") {
+    return (
+      <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+        Tại Support{pct != null ? ` (≤3%)` : ""}
+      </div>
+    );
+  }
+  if (tier === "B") {
+    return (
+      <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30">
+        <span className="w-2 h-2 rounded-full bg-amber-400" />
+        Gần Support{pct != null ? ` (${pct.toFixed(1)}%)` : ""}
+      </div>
+    );
+  }
+  // Tier C
+  return (
+    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-blue-500/15 text-blue-400 border border-blue-500/30">
+      <span className="w-2 h-2 rounded-full bg-blue-400" />
+      Momentum{pct != null ? ` (${pct.toFixed(1)}%)` : ""}
+    </div>
+  );
 }
 
 const SHORT_TERM_UPSIDE_THRESHOLD = 5; // % — dưới ngưỡng này coi là không hấp dẫn
@@ -245,6 +287,9 @@ export default function RecommendationsPage() {
                         <CardDescription className="mt-1">
                           Giá hiện tại: <span className="font-semibold text-foreground">{fmt(stock.currentPrice)} VND</span>
                         </CardDescription>
+                        <div className="mt-1.5">
+                          <ProximityBadge tier={stock.proximityTier} pct={stock.proximityPct} />
+                        </div>
                       </div>
                       <Badge variant="outline" className="text-emerald-400 border-emerald-500/30 text-xs">MUA</Badge>
                     </div>
@@ -252,7 +297,14 @@ export default function RecommendationsPage() {
                     {/* Entry & Stop Loss */}
                     <div className="mt-4 grid grid-cols-2 gap-3 bg-muted/20 p-3 rounded-lg border border-border/50">
                       <div className="space-y-1">
-                        <span className="text-muted-foreground text-xs font-medium block">📍 Entry an toàn</span>
+                        <span className="text-muted-foreground text-xs font-medium block">
+                          📍 Điểm vào
+                          {stock.entryPrice && stock.currentPrice && stock.entryPrice !== stock.currentPrice && (
+                            <span className="ml-1.5 text-[10px] text-muted-foreground/70">
+                              (cách giá {(Math.abs((stock.currentPrice - stock.entryPrice) / stock.currentPrice) * 100).toFixed(1)}%)
+                            </span>
+                          )}
+                        </span>
                         <span className="font-bold text-emerald-400 text-sm">
                           {stock.entryPrice ? fmt(stock.entryPrice) : "—"} VND
                         </span>

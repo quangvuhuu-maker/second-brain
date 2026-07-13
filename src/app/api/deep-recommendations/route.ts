@@ -39,6 +39,31 @@ function getVNDateString(): string {
  * Hard sanitize: Đảm bảo entryPrice/sellPrice luôn < currentPrice.
  * Nếu AI trả sai, tự động fix bằng fallback.
  */
+/**
+ * Phân loại proximity của cổ phiếu so với vùng support.
+ * Tier A: cách support ≤3% (đang chạm/test support → entry ngay)
+ * Tier B: cách support ≤8% (gần support → chờ pullback nhỏ)
+ * Tier C: cách support >8% (xa support → chỉ dùng momentum entry)
+ */
+function getSupportProximity(s: any): {
+  tier: "A" | "B" | "C";
+  proximityPct: number | null;
+  useMomentumEntry: boolean;
+} {
+  const price = parseFloat(s.price) || 0;
+  const support = parseFloat(s.support) || 0;
+
+  if (!price || !support || support >= price) {
+    return { tier: "C", proximityPct: null, useMomentumEntry: true };
+  }
+
+  const pct = ((price - support) / price) * 100;
+
+  if (pct <= 3) return { tier: "A", proximityPct: pct, useMomentumEntry: false };
+  if (pct <= 8) return { tier: "B", proximityPct: pct, useMomentumEntry: false };
+  return { tier: "C", proximityPct: pct, useMomentumEntry: true };
+}
+
 function sanitizeAnalysis(analysis: any, stocksMap: Map<string, any>): any {
   if (!analysis) return analysis;
 
@@ -47,14 +72,24 @@ function sanitizeAnalysis(analysis: any, stocksMap: Map<string, any>): any {
     const currentPrice = stock?.price ?? s.currentPrice;
     const support = stock?.support;
     const ma20 = stock?.movingAverage20;
+    const proximity = stock ? getSupportProximity(stock) : { tier: "C", proximityPct: null, useMomentumEntry: true };
 
     let entryPrice = s.entryPrice;
 
-    // Nếu AI trả entryPrice >= currentPrice → tự động fix
+    // Nếu AI trả entryPrice >= currentPrice → tự động fix theo tier
     if (!entryPrice || entryPrice >= currentPrice) {
-      if (support && support < currentPrice && (currentPrice - support) / currentPrice <= 0.08) {
+      if (proximity.tier === "A" && support && support < currentPrice) {
+        // Tier A: entry tại support ngay (cách ≤3%)
         entryPrice = support;
-        s.entryPointDesc = `[Auto-fix] Entry tại vùng Support ${support.toLocaleString("vi-VN")} — cách giá ${(((currentPrice - support) / currentPrice) * 100).toFixed(1)}%`;
+        s.entryPointDesc = `[Auto-fix] 🟢 Tier A — Entry tại Support ${support.toLocaleString("vi-VN")} (cách giá ${proximity.proximityPct?.toFixed(1)}%)`;
+      } else if (proximity.tier === "B" && support && support < currentPrice) {
+        // Tier B: chờ pullback về support
+        entryPrice = support;
+        s.entryPointDesc = `[Auto-fix] 🟡 Tier B — Chờ pullback về Support ${support.toLocaleString("vi-VN")} (cách giá ${proximity.proximityPct?.toFixed(1)}%)`;
+      } else if (proximity.useMomentumEntry) {
+        // Tier C: momentum entry tại giá hiện tại
+        entryPrice = currentPrice;
+        s.entryPointDesc = `[Auto-fix] 🔵 Momentum Entry — Vào tại giá hiện tại ${currentPrice.toLocaleString("vi-VN")} (support xa ${proximity.proximityPct?.toFixed(1) ?? "?"}%)`;
       } else if (ma20 && ma20 < currentPrice) {
         entryPrice = ma20;
         s.entryPointDesc = `[Auto-fix] Pullback về MA20 tại ${ma20.toLocaleString("vi-VN")}`;
@@ -62,10 +97,16 @@ function sanitizeAnalysis(analysis: any, stocksMap: Map<string, any>): any {
         entryPrice = Math.round(currentPrice * 0.97);
         s.entryPointDesc = `[Auto-fix] Fallback -3% tại ${entryPrice.toLocaleString("vi-VN")}`;
       }
-      console.warn(`[Sanitize] ${s.symbol}: entryPrice ${s.entryPrice} >= currentPrice ${currentPrice} → fixed to ${entryPrice}`);
+      console.warn(`[Sanitize] ${s.symbol} (Tier ${proximity.tier}): entryPrice ${s.entryPrice} >= currentPrice ${currentPrice} → fixed to ${entryPrice}`);
     }
 
-    return { ...s, entryPrice, currentPrice };
+    return {
+      ...s,
+      entryPrice,
+      currentPrice,
+      proximityTier: proximity.tier,
+      proximityPct: proximity.proximityPct,
+    };
   };
 
   const fixSell = (s: any) => {
@@ -122,7 +163,7 @@ function getBuyPool(stocks: any[], topN: number = 40): any[] {
     return true;
   });
 
-  // Score và lấy top N
+  // Score và lấy top N — ưu tiên mã gần vùng support
   const scored = candidates.map((s) => {
     let score = 0;
     const smc = (s.smcSignal || "").toLowerCase();
@@ -130,7 +171,9 @@ function getBuyPool(stocks: any[], topN: number = 40): any[] {
     const obv = (s.obvTrend || "").toLowerCase();
     const rsi = parseFloat(s.rsi) || 50;
     const macd = (s.macd || "").toLowerCase();
+    const proximity = getSupportProximity(s);
 
+    // ── Tín hiệu kỹ thuật ──
     if (smc.includes("bullish") || smc.includes("bos") || smc.includes("choch")) score += 3;
     if (vsa.includes("sos") || vsa.includes("sign of strength")) score += 3;
     if (obv.includes("up")) score += 2;
@@ -138,13 +181,37 @@ function getBuyPool(stocks: any[], topN: number = 40): any[] {
     if (macd.includes("bullish") || macd.includes("up")) score += 1;
     if ((parseFloat(s.volume) || 0) > 500000) score += 1;
 
-    return { ...s, _score: score };
+    // ── Proximity to Support (TRỌNG SỐ CAO NHẤT) ──
+    // Tier A: đang chạm/test support ≤3% → đây là cơ hội entry thực sự
+    if (proximity.tier === "A") score += 5;
+    // Tier B: gần support ≤8% → entry tốt khi có pullback
+    else if (proximity.tier === "B") score += 2;
+    // Tier C: xa support >8% → momentum entry, ưu tiên thấp hơn
+    // (không cộng điểm, nhưng vẫn giữ trong pool để fallback)
+
+    return { ...s, _score: score, _tier: proximity.tier, _proximityPct: proximity.proximityPct };
   });
 
-  return scored
-    .sort((a, b) => b._score - a._score)
+  // Sort: Tier A trước, rồi Tier B, cuối Tier C — trong cùng tier thì theo score
+  const tierOrder: Record<string, number> = { A: 0, B: 1, C: 2 };
+  const sorted = scored.sort((a, b) => {
+    const tierDiff = (tierOrder[a._tier] ?? 2) - (tierOrder[b._tier] ?? 2);
+    if (tierDiff !== 0) return tierDiff;
+    return b._score - a._score;
+  });
+
+  // Log phân bổ tier để debug
+  const tierCount = { A: 0, B: 0, C: 0 };
+  sorted.slice(0, topN).forEach((s) => { tierCount[s._tier as "A" | "B" | "C"]++; });
+  console.log(`[BuyPool] Tier A: ${tierCount.A} | Tier B: ${tierCount.B} | Tier C: ${tierCount.C} (trong top ${topN})`);
+
+  return sorted
     .slice(0, topN)
-    .map(({ _score, ...rest }) => rest);
+    .map(({ _score, _tier, _proximityPct, ...rest }) => ({
+      ...rest,
+      proximityTier: _tier,
+      proximityPct: _proximityPct,
+    }));
 }
 
 /**
@@ -277,11 +344,16 @@ export async function GET(request: NextRequest) {
       const sellPool = getSellPool(stocks, 40);
       console.log(`[DeepRec] buyPool: ${buyPool.length} mã | sellPool: ${sellPool.length} mã (từ ${stocks.length} mã tổng)`);
 
-      // Format compact
+      // Format compact — bổ sung proximityTier và proximityPct để AI biết ngữ cảnh entry
       const formatStocks = (list: any[]) => list
-        .map((s: any) =>
-          `${s.symbol}|${s.price}|${s.volume}|${s.trend}|${s.rsi}|${s.macd}|${s.obvTrend}|${s.bbWidth}|${s.support}|${s.resistance}|${s.smcSignal}|${s.vsaSignal}`
-        )
+        .map((s: any) => {
+          const tierLabel = s.proximityTier === "A"
+            ? `Tier-A(${s.proximityPct?.toFixed(1) ?? "?"}%_from_support)`
+            : s.proximityTier === "B"
+              ? `Tier-B(${s.proximityPct?.toFixed(1) ?? "?"}%_from_support)`
+              : `Tier-C(far_from_support${s.proximityPct ? `_${s.proximityPct.toFixed(1)}%` : ""})`;
+          return `${s.symbol}|${s.price}|${s.volume}|${s.trend}|${s.rsi}|${s.macd}|${s.obvTrend}|${s.bbWidth}|${s.support}|${s.resistance}|${s.smcSignal}|${s.vsaSignal}|${tierLabel}`;
+        })
         .join("\n");
 
       const buyText = formatStocks(buyPool);
@@ -296,26 +368,40 @@ export async function GET(request: NextRequest) {
 
 ⚠️ QUAN TRỌNG: Danh sách đã được lọc kỹ bằng code. CHỈ chọn từ đúng pool tương ứng.
 
-BUY POOL — ${buyPool.length} mã ĐÃ QUA BỘ LỌC (Trend không giảm, SMC không có LL/Bearish CHoCH, OBV hợp lệ):
-[Symbol|Price|Vol|Trend|RSI|MACD|OBV|BB|Support|Resistance|SMC|VSA]
+🎯 ƯU TIÊN HÀNG ĐẦU: Chọn mã Tier-A trước (đang chạm/test support ≤3%), sau đó Tier-B (≤8%), cuối cùng mới Tier-C (xa support).
+
+BUY POOL — ${buyPool.length} mã ĐÃ QUA BỘ LỌC (đã sắp xếp theo Tier A→B→C, trong cùng Tier theo tín hiệu kỹ thuật):
+[Symbol|Price|Vol|Trend|RSI|MACD|OBV|BB|Support|Resistance|SMC|VSA|ProximityTier]
 ${buyText}
 
 SELL POOL — ${sellPool.length} mã có tín hiệu bearish:
-[Symbol|Price|Vol|Trend|RSI|MACD|OBV|BB|Support|Resistance|SMC|VSA]
+[Symbol|Price|Vol|Trend|RSI|MACD|OBV|BB|Support|Resistance|SMC|VSA|ProximityTier]
 ${sellText}
 
 TIN VĨ MÔ (10 tin mới nhất):
 ${newsText}
 
-TIÊU CHÍ MUA: VSA=SOS hoặc SMC=Bullish BOS/CHoCH, OBV tăng, RSI 45-65, gần vùng Support.
+TIÊU CHÍ MUA: VSA=SOS hoặc SMC=Bullish BOS/CHoCH, OBV tăng, RSI 45-65, ưu tiên mã Tier-A/B.
 TIÊU CHÍ BÁN: VSA=SOW hoặc SMC=Bearish FVG, OBV giảm, RSI>70 hoặc thủng Support.
 
-QUY TẮC ENTRY & TARGET (BẮT BUỘC TUÂN THỦ):
-- entryPrice: Điểm vào lệnh AN TOÀN — chọn theo thứ tự ưu tiên sau:
-  1. **Ưu tiên 1 — Vùng Support kỹ thuật**: Dùng giá trị "support" trong data nếu support < currentPrice VÀ (currentPrice - support) / currentPrice ≤ 8%. Đây là vùng cầu thực sự, entry tại đây có ý nghĩa nhất.
-  2. **Ưu tiên 2 — Pullback về MA20**: Nếu support quá xa (>8%) hoặc support ≥ currentPrice → dùng movingAverage20 nếu MA20 < currentPrice.
-  3. **Fallback — Giảm 3%**: Nếu cả hai trường hợp trên không hợp lệ → entryPrice = currentPrice × 0.97.
-  ĐIỀU KIỆN BẮT BUỘC: entryPrice PHẢI < currentPrice. KHÔNG chase giá. entryPointDesc PHẢI ghi rõ lý do (VD: "Entry tại vùng Support 42,500 — cách giá 3.2%" hoặc "Pullback về MA20 tại 38,000").
+QUY TẮC ENTRY THEO TIER (BẮT BUỘC TUÂN THỦ):
+
+📌 Tier-A (cách support ≤3%): MÃ ĐANG TEST SUPPORT — CƠ HỘI ENTRY TỐT NHẤT
+  → entryPrice = giá support trong data (có thể vào ngay hoặc chờ xác nhận nến)
+  → entryPointDesc: "🟢 Tier A — Entry tại Support [giá] (cách giá [x]%)"
+  → Đây là mã ƯU TIÊN CHỌN VÀO topBuys — đang ở vùng cầu thực sự
+
+📌 Tier-B (cách support 3-8%): GẦN SUPPORT — CHỜ PULLBACK NHỎ
+  → entryPrice = giá support (chờ giá kéo về) hoặc MA20 nếu MA20 gần hơn support
+  → entryPointDesc: "🟡 Tier B — Chờ pullback về Support [giá] (cách giá [x]%)"
+  → Vẫn chọn được nếu tín hiệu kỹ thuật mạnh
+
+📌 Tier-C (cách support >8%): XA SUPPORT — CHỈ DÙNG KHI MOMENTUM MẠNH
+  → entryPrice = currentPrice (momentum entry, không chờ support)
+  → entryPointDesc: "🔵 Momentum Entry — Vào tại giá hiện tại (support xa [x]%, cần momentum xác nhận)"
+  → Chỉ chọn khi Tier A+B không đủ 10 mã, HOẶC tín hiệu SMC BOS/VSA SOS cực mạnh
+  → PHẢI ghi rõ lý do momentum trong technicalReason
+
 - stopLoss (số): Thấp hơn Support mạnh 2-3%. Đây là mức cắt lỗ cứng tuyệt đối.
 - targetShort (ngắn hạn 1-4 tuần): Kháng cự gần nhất. HAI ĐIỀU KIỆN BẮT BUỘC ĐỒNG THỜI: (1) upsideShort = ((targetShort - entryPrice) / entryPrice * 100) ≥ 8%; (2) targetShort PHẢI > currentPrice × 1.05 (cách giá hiện tại ít nhất +5%). Nếu không tìm được kháng cự thỏa điều kiện → KHÔNG đưa mã này vào danh sách.
 - targetMedium (trung hạn 1-3 tháng): Kháng cự trung hạn. HAI ĐIỀU KIỆN BẮT BUỘC ĐỒNG THỜI: (1) upsideMedium = ((targetMedium - entryPrice) / entryPrice * 100) ≥ 15%; (2) targetMedium PHẢI > currentPrice × 1.10 (cách giá hiện tại ít nhất +10%).
@@ -325,9 +411,10 @@ QUY TẮC ENTRY & TARGET (BẮT BUỘC TUÂN THỦ):
 - Tương tự cho topSells: sellPrice = điểm bán an toàn, downside tính từ sellPrice.
 
 Trả về JSON hợp lệ (không có markdown):
-{"topBuys":[{"symbol":"","currentPrice":0,"entryPrice":0,"entryPointDesc":"","stopLoss":0,"stopLossPoint":"","dcaPoint":"","scaleInPoint":"","targetShort":0,"upsideShort":0,"targetMedium":0,"upsideMedium":0,"targetLong":0,"upsideLong":0,"targetPrice":0,"upsidePercent":0,"technicalReason":"","fundamentalReason":""}],"topSells":[{"symbol":"","currentPrice":0,"sellPrice":0,"stopLoss":0,"targetShort":0,"downsideShort":0,"targetMedium":0,"downsideMedium":0,"targetLong":0,"downsideLong":0,"targetPrice":0,"downsidePercent":0,"technicalReason":"","fundamentalReason":""}]}
+{"topBuys":[{"symbol":"","currentPrice":0,"entryPrice":0,"entryPointDesc":"","stopLoss":0,"stopLossPoint":"","dcaPoint":"","scaleInPoint":"","targetShort":0,"upsideShort":0,"targetMedium":0,"upsideMedium":0,"targetLong":0,"upsideLong":0,"targetPrice":0,"upsidePercent":0,"proximityTier":"","technicalReason":"","fundamentalReason":""}],"topSells":[{"symbol":"","currentPrice":0,"sellPrice":0,"stopLoss":0,"targetShort":0,"downsideShort":0,"targetMedium":0,"downsideMedium":0,"targetLong":0,"downsideLong":0,"targetPrice":0,"downsidePercent":0,"technicalReason":"","fundamentalReason":""}]}
 
 Ghi chú: targetPrice = targetMedium (alias), upsidePercent = upsideMedium (alias). Điền cùng giá trị.
+Ghi chú: proximityTier trong JSON = "A", "B", hoặc "C" (lấy từ cột ProximityTier trong data).
 
 TIÊU CHÍ LOẠI TRỪ (TUYỆT ĐỐI KHÔNG được đưa vào topBuys):
 ❌ Trend = "downtrend" hoặc "bearish" → KHÔNG MUA dù RSI oversold
@@ -353,13 +440,14 @@ QUY TẮC fundamentalReason (BẮT BUỘC KHÔNG được để "N/A"):
 
 Quy tắc BẮT BUỘC:
 1. Chọn ĐÚNG 10 mã Mua và 10 mã Bán từ danh sách trên.
-2. entryPrice PHẢI nhỏ hơn currentPrice (entry an toàn, không chase giá).
-3. dcaPoint < entryPrice < scaleInPoint (thứ tự giá bắt buộc).
-4. Tuyệt đối KHÔNG đưa mã có Trend giảm + LL mới vào topBuys.
-5. fundamentalReason PHẢI có nội dung thực tế, KHÔNG được "N/A".
-6. Tất cả giá là NUMBER. Chỉ trả về JSON thuần, không text thêm.
-7. targetShort PHẢI > currentPrice × 1.05 (target ngắn hạn phải cách giá hiện tại ít nhất +5% để có giá trị giao dịch thực tiễn). Target quá gần giá hiện tại = vô nghĩa.
-8. Nếu một mã không có đủ dư địa tăng thỏa điều kiện → LOẠI mã đó, chọn mã có tiềm năng tốt hơn trong pool.`;
+2. ƯU TIÊN MÃ TIER-A trước. Tier-C chỉ chọn khi không đủ mã Tier-A và Tier-B.
+3. Tier-A/B: entryPrice = support (PHẢI < currentPrice). Tier-C: entryPrice = currentPrice.
+4. dcaPoint < entryPrice < scaleInPoint (thứ tự giá bắt buộc).
+5. Tuyệt đối KHÔNG đưa mã có Trend giảm + LL mới vào topBuys.
+6. fundamentalReason PHẢI có nội dung thực tế, KHÔNG được "N/A".
+7. Tất cả giá là NUMBER. Chỉ trả về JSON thuần, không text thêm.
+8. targetShort PHẢI > currentPrice × 1.05 (target ngắn hạn phải cách giá hiện tại ít nhất +5% để có giá trị giao dịch thực tiễn). Target quá gần giá hiện tại = vô nghĩa.
+9. Nếu một mã không có đủ dư địa tăng thỏa điều kiện → LOẠI mã đó, chọn mã có tiềm năng tốt hơn trong pool.`;
 
       // --- Fetch API keys từ Firestore ---
       let apiKeys: APIKeys = {};
