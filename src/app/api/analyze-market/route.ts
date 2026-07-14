@@ -141,7 +141,7 @@ export async function GET(request: NextRequest) {
       }
     };
 
-    const result = await generateAIContent(requestContent, apiKeys, "gemini-2.5-flash");
+    const result = await generateAIContent(requestContent, apiKeys, "gemini-2.5-flash-preview-05-20");
 
     const responseText = result.response.text();
     const analysis = safeParseJSON(responseText);
