@@ -8,7 +8,7 @@ const genAI = new GoogleGenerativeAI(apiKey);
 
 // Use the standard high-quality model
 export const geminiModel = genAI.getGenerativeModel({
-  model: "gemini-2.5-flash-preview-05-20",
+  model: "gemini-2.5-flash",
 });
 
 /**
@@ -40,7 +40,7 @@ export function getEnvGeminiKeys(): string[] {
 export async function generateContentWithFallback(
   request: string | GenerateContentRequest,
   keys: string[],
-  modelName: string = "gemini-2.5-flash-preview-05-20"
+  modelName: string = "gemini-2.5-flash"
 ) {
   // Ưu tiên keys từ DB, nếu rỗng thì lấy từ env pool
   const apiKeysToTry = keys && keys.length > 0 ? keys : getEnvGeminiKeys();
@@ -115,6 +115,12 @@ export async function generateContentWithFallback(
           console.warn(`[Gemini] Key ${keyIndex + 1} không hợp lệ. Chuyển sang key tiếp theo...`);
           lastError = error;
           break;
+        }
+
+        // Model không tồn tại (404) → log rõ và throw ngay với message dễ hiểu
+        if (msg.includes("404") || msg.includes("not found") || msg.includes("no longer available")) {
+          console.error(`[Gemini] ❌ Model "${modelName}" không tồn tại hoặc đã bị deprecated. Vui lòng cập nhật tên model.`);
+          throw new Error(`Model "${modelName}" không khả dụng (404). Vui lòng cập nhật tên model trong code.`);
         }
 
         // Các lỗi khác (cú pháp, content policy...) → throw ngay

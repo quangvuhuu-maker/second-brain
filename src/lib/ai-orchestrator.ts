@@ -28,7 +28,7 @@ export interface APIKeys {
 export async function generateAIContent(
   request: AIRequest,
   apiKeys: APIKeys,
-  geminiFallbackModel: string = "gemini-2.5-flash-preview-05-20"
+  geminiFallbackModel: string = "gemini-2.5-flash"
 ) {
   // Merge keys: DB keys có ưu tiên cao hơn, sau đó bổ sung bằng env keys
   const dbKeys = apiKeys.geminiKeys || [];
